@@ -20,7 +20,6 @@ RETURNS TABLE (
     predicted_arrival TIMESTAMP,
     delay_seconds INTEGER,
     vehicle_id VARCHAR(100),
-    occupancy_status SMALLINT,
     last_update TIMESTAMP,
     version_id INTEGER
 ) AS $$
@@ -59,7 +58,6 @@ BEGIN
             stu.arrival_delay,
             stu.arrival_time as predicted_arrival,
             vp.vehicle_id,
-            vp.occupancy_status,
             GREATEST(tu.timestamp, vp.timestamp) as last_update,
             fm.version_id
         FROM trip_updates tu
@@ -85,7 +83,6 @@ BEGIN
         ) as predicted_arrival,
         ru.arrival_delay as delay_seconds,
         ru.vehicle_id,
-        ru.occupancy_status,
         ru.last_update,
         ss.version_id
     FROM static_schedule ss
@@ -108,11 +105,10 @@ RETURNS TABLE (
     route_name VARCHAR(255),
     latitude NUMERIC(10,7),
     longitude NUMERIC(10,7),
-    speed NUMERIC(5,2),
     bearing NUMERIC(5,2),
     current_stop_id VARCHAR(50),
     current_stop_name VARCHAR(255),
-    occupancy_status SMALLINT,
+    current_status SMALLINT,
     delay_seconds INTEGER,
     version_id INTEGER
 ) AS $$
@@ -128,11 +124,10 @@ BEGIN
         COALESCE(r.route_short_name, r.route_long_name) as route_name,
         vp.latitude,
         vp.longitude,
-        vp.speed,
         vp.bearing,
         vp.stop_id as current_stop_id,
         s.stop_name as current_stop_name,
-        vp.occupancy_status,
+        vp.current_status,
         tu.delay as delay_seconds,
         fm.version_id
     FROM vehicle_positions vp
@@ -167,8 +162,7 @@ RETURNS TABLE (
     longitude NUMERIC(10,7),
     distance_meters NUMERIC,
     bearing NUMERIC(5,2),
-    speed NUMERIC(5,2),
-    occupancy_status SMALLINT,
+    current_status SMALLINT,
     last_update TIMESTAMP,
     version_id INTEGER
 ) AS $$
@@ -188,8 +182,7 @@ BEGIN
         vp.longitude,
         earth_distance(ll_to_earth(vp.latitude, vp.longitude), ll_to_earth(lat, lon))::NUMERIC as distance_meters,
         vp.bearing,
-        vp.speed,
-        vp.occupancy_status,
+        vp.current_status,
         vp.timestamp as last_update,
         vp.version_id
     FROM current_vehicle_positions vp
@@ -255,7 +248,6 @@ RETURNS TABLE (
     total_trips INTEGER,
     delayed_trips INTEGER,
     canceled_trips INTEGER,
-    avg_occupancy_percentage NUMERIC,
     version_id INTEGER
 ) AS $$
 BEGIN
@@ -268,17 +260,14 @@ BEGIN
             tu.trip_id,
             tu.delay,
             tu.schedule_relationship,
-            AVG(vp.occupancy_percentage) as trip_occupancy,
             fm.version_id
         FROM trip_updates tu
         JOIN feed_messages fm ON tu.feed_message_id = fm.feed_message_id
         JOIN active_version av ON fm.version_id = av.vid
-        LEFT JOIN vehicle_positions vp ON tu.trip_id = vp.trip_id 
-            AND tu.feed_message_id = vp.feed_message_id
         WHERE tu.route_id = p_route_id
           AND fm.source_id = p_source_id
           AND fm.received_at > NOW() - p_time_window
-        GROUP BY tu.trip_id, tu.delay, tu.schedule_relationship, fm.version_id
+          AND tu.is_deleted = FALSE
     )
     SELECT 
         AVG(delay)::NUMERIC as avg_delay_seconds,
@@ -287,8 +276,72 @@ BEGIN
         COUNT(*)::INTEGER as total_trips,
         COUNT(*) FILTER (WHERE delay > 300)::INTEGER as delayed_trips,
         COUNT(*) FILTER (WHERE schedule_relationship = 3)::INTEGER as canceled_trips,
-        AVG(trip_occupancy)::NUMERIC as avg_occupancy_percentage,
         MAX(version_id)::INTEGER as version_id
     FROM trip_delays;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get active alerts for a route or stop
+CREATE OR REPLACE FUNCTION get_active_alerts(
+    p_route_id VARCHAR(50) DEFAULT NULL,
+    p_stop_id VARCHAR(50) DEFAULT NULL,
+    p_source_id INTEGER DEFAULT NULL,
+    p_version_id INTEGER DEFAULT NULL
+)
+RETURNS TABLE (
+    alert_id INTEGER,
+    entity_id VARCHAR(100),
+    cause SMALLINT,
+    effect SMALLINT,
+    severity SMALLINT,
+    url TEXT,
+    header_text TEXT,
+    description_text TEXT,
+    start_time TIMESTAMP,
+    end_time TIMESTAMP,
+    affected_routes TEXT[],
+    affected_stops TEXT[],
+    source_name VARCHAR(100),
+    version_id INTEGER
+) AS $$
+BEGIN
+    RETURN QUERY
+    WITH active_version AS (
+        SELECT COALESCE(p_version_id, (SELECT v.version_id FROM gtfs.versions v WHERE v.is_active = TRUE LIMIT 1)) as vid
+    )
+    SELECT 
+        a.alert_id,
+        a.entity_id,
+        a.cause,
+        a.effect,
+        a.severity,
+        url_trans.text as url,
+        header_trans.text as header_text,
+        desc_trans.text as description_text,
+        CASE WHEN ap.start_time IS NOT NULL THEN TO_TIMESTAMP(ap.start_time) ELSE NULL END as start_time,
+        CASE WHEN ap.end_time IS NOT NULL THEN TO_TIMESTAMP(ap.end_time) ELSE NULL END as end_time,
+        ARRAY_AGG(DISTINCT aie.route_id) FILTER (WHERE aie.route_id IS NOT NULL) as affected_routes,
+        ARRAY_AGG(DISTINCT aie.stop_id) FILTER (WHERE aie.stop_id IS NOT NULL) as affected_stops,
+        ts.source_name,
+        fm.version_id
+    FROM alerts a
+    JOIN feed_messages fm ON a.feed_message_id = fm.feed_message_id
+    JOIN active_version av ON fm.version_id = av.vid
+    JOIN gtfs.transport_sources ts ON fm.source_id = ts.source_id
+    LEFT JOIN alert_active_periods ap ON a.alert_id = ap.alert_id
+    LEFT JOIN alert_informed_entities aie ON a.alert_id = aie.alert_id
+    LEFT JOIN alert_translations url_trans ON a.alert_id = url_trans.alert_id AND url_trans.field_type = 'url'
+    LEFT JOIN alert_translations header_trans ON a.alert_id = header_trans.alert_id AND header_trans.field_type = 'header_text'
+    LEFT JOIN alert_translations desc_trans ON a.alert_id = desc_trans.alert_id AND desc_trans.field_type = 'description_text'
+    WHERE (p_source_id IS NULL OR fm.source_id = p_source_id)
+      AND (p_route_id IS NULL OR aie.route_id = p_route_id)
+      AND (p_stop_id IS NULL OR aie.stop_id = p_stop_id)
+      AND (ap.start_time IS NULL OR ap.start_time <= EXTRACT(EPOCH FROM NOW()))
+      AND (ap.end_time IS NULL OR ap.end_time >= EXTRACT(EPOCH FROM NOW()))
+      AND fm.received_at > NOW() - INTERVAL '24 hours'
+      AND a.is_deleted = FALSE
+    GROUP BY a.alert_id, a.entity_id, a.cause, a.effect, a.severity, 
+             url_trans.text, header_trans.text, desc_trans.text, 
+             ap.start_time, ap.end_time, ts.source_name, fm.version_id;
 END;
 $$ LANGUAGE plpgsql;
