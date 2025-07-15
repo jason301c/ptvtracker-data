@@ -100,6 +100,8 @@ cp .env.example .env
 # Edit .env with your configuration
 ```
 
+The application automatically loads environment variables from the `.env` file if it exists. You can also set environment variables directly in your shell.
+
 5. Run the application:
 ```bash
 go run cmd/ptvtracker/main.go
@@ -110,11 +112,10 @@ go run cmd/ptvtracker/main.go
 Environment variables control the application behavior:
 
 ### Database
-- `DB_HOST`: PostgreSQL host (default: localhost)
-- `DB_PORT`: PostgreSQL port (default: 5432)
-- `DB_USER`: Database user (default: postgres)
-- `DB_PASSWORD`: Database password
-- `DB_NAME`: Database name (default: ptvtracker)
+- `DATABASE_URL`: PostgreSQL connection string
+  - Format: `postgres://username:password@host:port/database?sslmode=disable`
+  - Example: `postgres://postgres:mypassword@localhost:5432/ptvtracker?sslmode=disable`
+  - Supports both `postgres://` and `postgresql://` prefixes
 
 ### GTFS-Static
 - `GTFS_STATIC_CHECK_INTERVAL`: How often to check for updates (default: 30m)

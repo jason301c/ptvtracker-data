@@ -158,7 +158,16 @@ func logWithFields(event *zerolog.Event, msg string, fields ...interface{}) {
 			if !ok {
 				continue
 			}
-			event = event.Interface(key, fields[i+1])
+			// Special handling for error types
+			if key == "error" {
+				if err, ok := fields[i+1].(error); ok && err != nil {
+					event = event.Err(err)
+				} else {
+					event = event.Interface(key, fields[i+1])
+				}
+			} else {
+				event = event.Interface(key, fields[i+1])
+			}
 		}
 	}
 	event.Msg(msg)

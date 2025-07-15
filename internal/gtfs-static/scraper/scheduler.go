@@ -114,7 +114,7 @@ func (s *GTFSScheduler) checkAndUpdate(ctx context.Context) error {
 	}
 
 	// Check if we have a newer version
-	hasNewer, err := s.versionChecker.HasNewerVersion(ctx, metadata.LastModified)
+	hasNewer, err := s.versionChecker.HasNewerVersion(ctx, metadata.LastModified.Time)
 	if err != nil {
 		return fmt.Errorf("checking version: %w", err)
 	}
@@ -125,14 +125,14 @@ func (s *GTFSScheduler) checkAndUpdate(ctx context.Context) error {
 	}
 
 	s.logger.Info("New version detected, starting import process",
-		"last_modified", metadata.LastModified)
+		"last_modified", metadata.LastModified.Time)
 
 	// Download the file
 	downloadPath := filepath.Join(
 		s.config.DownloadDir,
 		fmt.Sprintf("gtfs_%s_%s.zip",
 			s.config.SourceName,
-			metadata.LastModified.Format("20060102_150405")),
+			metadata.LastModified.Time.Format("20060102_150405")),
 	)
 
 	if err := s.downloader.Download(ctx, metadata.URL, downloadPath); err != nil {
@@ -143,13 +143,13 @@ func (s *GTFSScheduler) checkAndUpdate(ctx context.Context) error {
 	// Create new version
 	versionName := fmt.Sprintf("%s_%s",
 		s.config.SourceName,
-		metadata.LastModified.Format("2006-01-02_15:04:05"))
+		metadata.LastModified.Time.Format("2006-01-02_15:04:05"))
 
 	versionID, err := s.versionChecker.CreateNewVersion(
 		ctx,
 		versionName,
 		metadata.URL,
-		metadata.LastModified,
+		metadata.LastModified.Time,
 	)
 	if err != nil {
 		return fmt.Errorf("creating version: %w", err)

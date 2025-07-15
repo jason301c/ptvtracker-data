@@ -3,13 +3,13 @@ package models
 import "time"
 
 type DatasetMetadata struct {
-	ResourceID    string    `json:"id"`
-	Name          string    `json:"name"`
-	LastModified  time.Time `json:"last_modified"`
-	Format        string    `json:"format"`
-	URL           string    `json:"url"`
-	PackageID     string    `json:"package_id"`
-	DatastoreActive bool    `json:"datastore_active"`
+	ResourceID      string     `json:"id"`
+	Name            string     `json:"name"`
+	LastModified    CustomTime `json:"last_modified"`
+	Format          string     `json:"format"`
+	URL             string     `json:"url"`
+	PackageID       string     `json:"package_id"`
+	DatastoreActive bool       `json:"datastore_active"`
 }
 
 type DatasetResponse struct {
