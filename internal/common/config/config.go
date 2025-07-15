@@ -43,8 +43,9 @@ type EndpointConfig struct {
 }
 
 type LoggingConfig struct {
-	Level    string
-	FilePath string
+	Level      string
+	FilePath   string
+	DiscordURL string
 }
 
 func Load() (*Config, error) {
@@ -70,8 +71,9 @@ func Load() (*Config, error) {
 			Endpoints:       getDefaultEndpoints(),
 		},
 		Logging: LoggingConfig{
-			Level:    getEnv("LOG_LEVEL", "info"),
-			FilePath: getEnv("LOG_FILE", "ptvtracker.log"),
+			Level:      getEnv("LOG_LEVEL", "info"),
+			FilePath:   getEnv("LOG_FILE", "ptvtracker.log"),
+			DiscordURL: getEnv("DISCORD_WEBHOOK_URL", ""),
 		},
 	}
 

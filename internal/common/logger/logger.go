@@ -8,6 +8,7 @@ import (
 
 	"github.com/natefinch/lumberjack"
 	"github.com/rs/zerolog"
+	"github.com/ptvtracker-data/internal/common/discord"
 )
 
 // Logger interface defines the logging methods
@@ -36,14 +37,14 @@ func NewWithLevel(level string, writers ...io.Writer) Logger {
 	multi := io.MultiWriter(writers...)
 	
 	// Parse log level
-	logLevel := parseLogLevel(level)
+	logLevel := ParseLogLevel(level)
 	
 	zl := zerolog.New(multi).With().Timestamp().Logger().Level(logLevel)
 	return &loggerImpl{zl: zl}
 }
 
-// parseLogLevel converts string log level to zerolog.Level
-func parseLogLevel(level string) zerolog.Level {
+// ParseLogLevel converts string log level to zerolog.Level
+func ParseLogLevel(level string) zerolog.Level {
 	switch level {
 	case "debug":
 		return zerolog.DebugLevel
@@ -107,8 +108,9 @@ func (l *loggerImpl) Fatal(msg string, fields ...interface{}) {
 
 // Logger is the global logger abstraction
 var (
-	logger     zerolog.Logger
-	loggerOnce sync.Once
+	logger        zerolog.Logger
+	loggerOnce    sync.Once
+	discordClient *discord.Client
 )
 
 // LoggerConfig holds configuration for the logger
@@ -122,6 +124,7 @@ type LoggerConfig struct {
 	MaxAgeDays      int
 	Compress        bool
 	TimeFieldFormat string
+	DiscordURL      string
 }
 
 // InitLogger initializes the global logger with the given config
@@ -148,6 +151,10 @@ func InitLogger(cfg LoggerConfig) {
 		multi := io.MultiWriter(writers...)
 		logger = zerolog.New(multi).With().Timestamp().Logger().Level(cfg.Level)
 		zerolog.TimeFieldFormat = cfg.TimeFieldFormat
+
+		if cfg.DiscordURL != "" {
+			discordClient = discord.NewClient(cfg.DiscordURL)
+		}
 	})
 }
 
@@ -164,6 +171,7 @@ func Warn(msg string, fields ...interface{}) {
 // Error logs an error message
 func Error(msg string, fields ...interface{}) {
 	logWithFields(logger.Error(), msg, fields...)
+	sendToDiscord("ERROR", msg, fields...)
 }
 
 // Debug logs a debug message
@@ -174,6 +182,7 @@ func Debug(msg string, fields ...interface{}) {
 // Fatal logs a fatal message and exits
 func Fatal(msg string, fields ...interface{}) {
 	logWithFields(logger.Fatal(), msg, fields...)
+	sendToDiscord("FATAL", msg, fields...)
 }
 
 // logWithFields adds structured fields to the event
@@ -211,6 +220,33 @@ func GetLogger() zerolog.Logger {
 	return logger
 }
 
+// sendToDiscord sends a log message to Discord for ERROR and FATAL levels
+func sendToDiscord(level, msg string, fields ...interface{}) {
+	if discordClient == nil {
+		return
+	}
+
+	fieldsMap := make(map[string]interface{})
+	
+	if len(fields) == 1 {
+		if m, ok := fields[0].(map[string]interface{}); ok {
+			fieldsMap = m
+		}
+	} else if len(fields)%2 == 0 {
+		for i := 0; i < len(fields); i += 2 {
+			if key, ok := fields[i].(string); ok {
+				fieldsMap[key] = fields[i+1]
+			}
+		}
+	}
+
+	go func() {
+		if err := discordClient.SendLogMessage(level, msg, fieldsMap); err != nil {
+			logger.Warn().Err(err).Msg("Failed to send log to Discord")
+		}
+	}()
+}
+
 // Example default config
 func DefaultLoggerConfig() LoggerConfig {
 	return LoggerConfig{
@@ -223,5 +259,6 @@ func DefaultLoggerConfig() LoggerConfig {
 		MaxAgeDays:      30,
 		Compress:        true,
 		TimeFieldFormat: time.RFC3339,
+		DiscordURL:      "",
 	}
 }

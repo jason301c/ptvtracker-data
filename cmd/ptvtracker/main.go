@@ -28,8 +28,22 @@ func main() {
 		panic("Failed to load configuration: " + err.Error())
 	}
 
-	// Initialize logger with configured level
-	log := logger.NewWithLevel(cfg.Logging.Level,
+	// Initialize logger with configured level and Discord support
+	loggerConfig := logger.LoggerConfig{
+		Level:           logger.ParseLogLevel(cfg.Logging.Level),
+		Console:         true,
+		File:            true,
+		FilePath:        cfg.Logging.FilePath,
+		MaxSizeMB:       10,
+		MaxBackups:      5,
+		MaxAgeDays:      30,
+		Compress:        true,
+		TimeFieldFormat: "2006-01-02T15:04:05Z07:00",
+		DiscordURL:      cfg.Logging.DiscordURL,
+	}
+	logger.InitLogger(loggerConfig)
+	
+	log := logger.New(
 		logger.ConsoleWriter(),
 		logger.FileWriter(cfg.Logging.FilePath),
 	)
