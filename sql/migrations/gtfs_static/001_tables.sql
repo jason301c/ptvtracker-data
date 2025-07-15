@@ -198,11 +198,11 @@ CREATE TABLE transfers (
 
 -- Sample data insertion for transport sources
 INSERT INTO transport_sources (source_name, description) VALUES
-('tram', 'Melbourne Tram Network'),
-('train', 'Melbourne Train Network'),
-('bus', 'Melbourne Bus Network'),
-('vline', 'V/Line Regional Services'),
-('skybus', 'SkyBus Airport Services'),
-('nightrider', 'Night Bus Services'),
-('ferry', 'Ferry Services'),
-('taxi', 'Taxi Services');
+('reg_train', 'V/Line Regional Train Services'),
+('train', 'Metro Train Network'),
+('tram', 'Metro Tram Network'),
+('bus', 'Metro Bus Network'),
+('reg_coach', 'Regional Coach Services'),
+('reg_bus', 'Regional Bus Services'),
+('interstate', 'Interstate Services'),
+('skybus', 'SkyBus Airport Services');
