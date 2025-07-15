@@ -10,6 +10,68 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// Logger interface defines the logging methods
+type Logger interface {
+	Info(msg string, fields ...interface{})
+	Warn(msg string, fields ...interface{})
+	Error(msg string, fields ...interface{})
+	Debug(msg string, fields ...interface{})
+	Fatal(msg string, fields ...interface{})
+}
+
+// logger implementation
+type loggerImpl struct {
+	zl zerolog.Logger
+}
+
+// New creates a new logger instance with the given writers
+func New(writers ...io.Writer) Logger {
+	multi := io.MultiWriter(writers...)
+	zl := zerolog.New(multi).With().Timestamp().Logger()
+	return &loggerImpl{zl: zl}
+}
+
+// ConsoleWriter returns a console writer
+func ConsoleWriter() io.Writer {
+	return zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}
+}
+
+// FileWriter returns a file writer with rotation
+func FileWriter(path string) io.Writer {
+	return &lumberjack.Logger{
+		Filename:   path,
+		MaxSize:    10, // megabytes
+		MaxBackups: 5,
+		MaxAge:     30, // days
+		Compress:   true,
+	}
+}
+
+// Info logs an info message
+func (l *loggerImpl) Info(msg string, fields ...interface{}) {
+	logWithFields(l.zl.Info(), msg, fields...)
+}
+
+// Warn logs a warning message
+func (l *loggerImpl) Warn(msg string, fields ...interface{}) {
+	logWithFields(l.zl.Warn(), msg, fields...)
+}
+
+// Error logs an error message
+func (l *loggerImpl) Error(msg string, fields ...interface{}) {
+	logWithFields(l.zl.Error(), msg, fields...)
+}
+
+// Debug logs a debug message
+func (l *loggerImpl) Debug(msg string, fields ...interface{}) {
+	logWithFields(l.zl.Debug(), msg, fields...)
+}
+
+// Fatal logs a fatal message and exits
+func (l *loggerImpl) Fatal(msg string, fields ...interface{}) {
+	logWithFields(l.zl.Fatal(), msg, fields...)
+}
+
 // Logger is the global logger abstraction
 var (
 	logger     zerolog.Logger

@@ -6,19 +6,24 @@
 *.dylib
 *.test
 *.out
+ptvtracker
 
 # Output of build tools
 /build/
 /bin/
 
 # Go modules
-/go.sum
+# go.sum is needed for reproducible builds
 
 # Dependency directories (vendor/)
 vendor/
 
 # Logs
 *.log
+app.log
+lumberjack.log
+logy.log
+ptvtracker.log
 
 # IDE/editor files
 .vscode/
@@ -43,6 +48,9 @@ coverage.out
 .env
 .env.*
 
+# GTFS Downloads
+/tmp/
+*.zip
+
 # Claude
 .claude/
-.CLAUDE.md
