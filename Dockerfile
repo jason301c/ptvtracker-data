@@ -57,12 +57,5 @@ ENV LOG_LEVEL=info
 ENV LOG_FILE=/app/logs/ptvtracker.log
 ENV GTFS_STATIC_DOWNLOAD_DIR=/app/data
 
-# Expose health check port (if you add one later)
-EXPOSE 8080
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD pgrep ptvtracker || exit 1
-
 # Run the application
 CMD ["./ptvtracker"]

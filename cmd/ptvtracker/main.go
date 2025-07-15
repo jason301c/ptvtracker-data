@@ -17,9 +17,14 @@ import (
 
 func main() {
 	// Load .env file if it exists
+	// In production, environment variables are typically provided directly
+	// rather than through a .env file, so we only load if the file exists
 	if err := godotenv.Load(); err != nil {
-		// If .env doesn't exist, let's exit.
-		panic("Failed to load .env file: " + err.Error())
+		// Only panic if it's not a "file not found" error
+		if !os.IsNotExist(err) {
+			panic("Failed to load .env file: " + err.Error())
+		}
+		// If .env doesn't exist, that's okay - proceed with environment variables
 	}
 
 	// Load configuration
