@@ -24,7 +24,7 @@ CREATE UNIQUE INDEX unique_active_version ON versions (is_active) WHERE is_activ
 
 -- Transport sources lookup table
 CREATE TABLE transport_sources (
-    source_id SERIAL PRIMARY KEY,
+    source_id INTEGER PRIMARY KEY,
     source_name VARCHAR(50) NOT NULL UNIQUE, -- e.g., 'tram', 'train', 'bus'
     description TEXT,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP -- UTC
@@ -205,13 +205,16 @@ CREATE TABLE transfers (
     FOREIGN KEY (to_trip_id, source_id, version_id) REFERENCES trips(trip_id, source_id, version_id)
 );
 
--- Sample data insertion for transport sources
-INSERT INTO transport_sources (source_name, description) VALUES
-('reg_train', 'V/Line Regional Train Services'),
-('train', 'Metro Train Network'),
-('tram', 'Metro Tram Network'),
-('bus', 'Metro Bus Network'),
-('reg_coach', 'Regional Coach Services'),
-('reg_bus', 'Regional Bus Services'),
-('interstate', 'Interstate Services'),
-('skybus', 'SkyBus Airport Services');
+-- PTV transport source mapping
+INSERT INTO transport_sources (source_id, source_name, description) VALUES
+(1, 'Regional Train', 'PTV Regional Train Services'),
+(2, 'Metropolitan Train', 'PTV Metropolitan Train Network'),
+(3, 'Metropolitan Tram', 'PTV Metropolitan Tram Network'),
+(4, 'Metropolitan Bus', 'PTV Metropolitan Bus Network'),
+(5, 'Regional Coach', 'PTV Regional Coach Services'),
+(6, 'Regional Bus', 'PTV Regional Bus Services'),
+(10, 'Interstate', 'PTV Interstate Services'),
+(11, 'SkyBus', 'PTV SkyBus Airport Services')
+ON CONFLICT (source_id) DO UPDATE SET 
+    source_name = EXCLUDED.source_name, 
+    description = EXCLUDED.description;

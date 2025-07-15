@@ -1,10 +1,14 @@
 package scraper
 
 import (
+	"archive/zip"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
@@ -151,13 +155,76 @@ func (s *GTFSScheduler) checkAndUpdate(ctx context.Context) error {
 		return fmt.Errorf("creating version: %w", err)
 	}
 
-	// Import the data
-	imp := importer.NewImporter(s.database, 1, versionID) // SourceID hardcoded as 1
-	if err := imp.Import(ctx, downloadPath); err != nil {
-		s.logger.Error("Import failed, version will remain inactive",
-			"version_id", versionID,
-			"error", err)
-		return fmt.Errorf("importing data: %w", err)
+	// Create a temporary directory for nested zips
+	tempExtractDir, err := os.MkdirTemp(s.config.DownloadDir, "gtfs-extract-*")
+	if err != nil {
+		return fmt.Errorf("creating temp extraction directory: %w", err)
+	}
+	defer os.RemoveAll(tempExtractDir)
+
+	s.logger.Info("Extracting and importing from master zip", "path", downloadPath)
+
+	// Open the master zip file
+	zipReader, err := zip.OpenReader(downloadPath)
+	if err != nil {
+		return fmt.Errorf("opening master zip file: %w", err)
+	}
+	defer zipReader.Close()
+
+	// Regex to find nested zips, e.g., "1/google_transit.zip"
+	nestedZipRegex := regexp.MustCompile(`^(\d+)/google_transit\.zip$`)
+
+	// Loop through all files in the master zip to find and import sources
+	for _, file := range zipReader.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+
+		matches := nestedZipRegex.FindStringSubmatch(file.Name)
+		if len(matches) < 2 {
+			continue
+		}
+
+		sourceID, err := strconv.Atoi(matches[1])
+		if err != nil {
+			s.logger.Warn("Could not parse source ID from path, skipping", "path", file.Name, "error", err)
+			continue
+		}
+
+		s.logger.Info("Found source to import", "source_id", sourceID, "file", file.Name)
+
+		// Extract the nested zip to a temporary file
+		nestedZipPath := filepath.Join(tempExtractDir, fmt.Sprintf("source_%d.zip", sourceID))
+
+		nestedZipFile, err := os.Create(nestedZipPath)
+		if err != nil {
+			return fmt.Errorf("creating temp file for source %d: %w", sourceID, err)
+		}
+
+		rc, err := file.Open()
+		if err != nil {
+			nestedZipFile.Close()
+			return fmt.Errorf("opening nested zip for source %d: %w", sourceID, err)
+		}
+
+		_, err = io.Copy(nestedZipFile, rc)
+		rc.Close()
+		nestedZipFile.Close()
+		if err != nil {
+			return fmt.Errorf("extracting nested zip for source %d: %w", sourceID, err)
+		}
+
+		// Import the data for this source
+		s.logger.Info("Starting import for source", "source_id", sourceID, "version_id", versionID)
+		imp := importer.NewImporter(s.database, sourceID, versionID)
+		if err := imp.Import(ctx, nestedZipPath); err != nil {
+			s.logger.Error("Import failed for source, version will remain inactive",
+				"source_id", sourceID,
+				"version_id", versionID,
+				"error", err)
+			return fmt.Errorf("importing data for source %d: %w", sourceID, err)
+		}
+		s.logger.Info("Successfully imported source", "source_id", sourceID)
 	}
 
 	// Activate the new version
