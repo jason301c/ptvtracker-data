@@ -57,5 +57,9 @@ ENV LOG_LEVEL=info
 ENV LOG_FILE=/app/logs/ptvtracker.log
 ENV GTFS_STATIC_DOWNLOAD_DIR=/app/data
 
+# Health check - checks if the process is running
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD pgrep -f ptvtracker || exit 1
+
 # Run the application
 CMD ["./ptvtracker"]
