@@ -1,0 +1,3 @@
+{"level":"info","module":"main","version":"1.0.0","time":"2025-07-15T22:20:26+10:00","message":"App started"}
+{"level":"warn","threshold":80,"time":"2025-07-15T22:20:26+10:00","message":"This is a warning"}
+{"level":"error","error_code":500,"reason":"Internal Server Error","time":"2025-07-15T22:20:26+10:00","message":"An error occurred"}
