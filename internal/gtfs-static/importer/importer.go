@@ -34,9 +34,6 @@ func (i *Importer) Import(ctx context.Context, zipPath string) error {
 	// Create batch inserters
 	agencyBatch := i.newBatchInserter("agency", 8)
 	stopBatch := i.newBatchInserter("stops", 10)
-
-	// Track if we need to defer foreign key checks
-	var deferredConstraints bool
 	routeBatch := i.newBatchInserter("routes", 9)
 	calendarBatch := i.newBatchInserter("calendar", 12)
 	calendarDateBatch := i.newBatchInserter("calendar_dates", 5)
@@ -53,6 +50,11 @@ func (i *Importer) Import(ctx context.Context, zipPath string) error {
 		return fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Defer all constraint checks until the transaction is committed.
+	if _, err := tx.Exec("SET CONSTRAINTS ALL DEFERRED"); err != nil {
+		return fmt.Errorf("setting deferred constraints: %w", err)
+	}
 
 	// Set transaction for all batch inserters
 	batches := []*batchInserter{
@@ -228,60 +230,7 @@ func (i *Importer) Import(ctx context.Context, zipPath string) error {
 			)
 		},
 		OnFileComplete: func(fileName string) error {
-			// Flush ALL batches after each file to ensure referential integrity
-			batches := map[string]*batchInserter{
-				"agency.txt":         agencyBatch,
-				"levels.txt":         levelBatch,
-				"calendar.txt":       calendarBatch,
-				"calendar_dates.txt": calendarDateBatch,
-				"routes.txt":         routeBatch,
-				"shapes.txt":         shapeBatch,
-				"trips.txt":          tripBatch,
-				"stop_times.txt":     stopTimeBatch,
-				"pathways.txt":       pathwayBatch,
-				"transfers.txt":      transferBatch,
-			}
-
-			// Special handling for specific files
-			switch fileName {
-			case "stops.txt":
-				// Defer the parent station constraint to allow stops to be inserted in any order
-				if !deferredConstraints {
-					if _, err := tx.Exec("SET CONSTRAINTS gtfs.fk_stops_parent DEFERRED"); err != nil {
-						// If this fails, it's okay - the constraint might not exist or might not be deferrable
-						i.db.Logger().Warn("Could not defer stops parent constraint", "error", err)
-					}
-					deferredConstraints = true
-				}
-			case "routes.txt":
-				// Trips depend on routes
-				if err := routeBatch.Flush(); err != nil {
-					return fmt.Errorf("flushing routes batch: %w", err)
-				}
-			case "shapes.txt":
-				// Trips depend on shapes
-				if err := shapeBatch.Flush(); err != nil {
-					return fmt.Errorf("flushing shapes batch: %w", err)
-				}
-			case "trips.txt":
-				// Stop times depend on trips
-				i.db.Logger().Info("Flushing trips", "current_batch", tripBatch.valueCount, "total_processed", tripBatch.totalCount)
-				if err := tripBatch.Flush(); err != nil {
-					return fmt.Errorf("flushing trips batch: %w", err)
-				}
-			}
-
-			// Always flush the corresponding batch after file completion
-			if batch, exists := batches[fileName]; exists && batch != nil {
-				i.db.Logger().Info("Final flush for file",
-					"file", fileName,
-					"current_batch", batch.valueCount,
-					"total_processed", batch.totalCount)
-				if err := batch.Flush(); err != nil {
-					return fmt.Errorf("final flush for %s: %w", fileName, err)
-				}
-			}
-
+			i.db.Logger().Debug("Finished processing file", "file", fileName)
 			return nil
 		},
 	}
@@ -382,8 +331,6 @@ func (b *batchInserter) buildInsertQuery() string {
 		}
 		sb.WriteString(")")
 	}
-
-	sb.WriteString(" ON CONFLICT DO NOTHING")
 
 	return sb.String()
 }

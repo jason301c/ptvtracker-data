@@ -111,6 +111,12 @@ func (p *Parser) parseFile(file *zip.File, callbacks ParseCallbacks) error {
 		return fmt.Errorf("reading header: %w", err)
 	}
 
+	// Sanitize the first header field to remove a potential UTF-8 BOM,
+	// which can be present in files saved on Windows.
+	if len(header) > 0 {
+		header[0] = strings.TrimPrefix(header[0], "\uFEFF")
+	}
+
 	// Create header index map
 	headerMap := make(map[string]int)
 	for i, h := range header {

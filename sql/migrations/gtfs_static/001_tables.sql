@@ -33,8 +33,8 @@ CREATE TABLE transport_sources (
 -- Agency table
 CREATE TABLE agency (
     agency_id VARCHAR(50),
-    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id),
-    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id) DEFERRABLE INITIALLY DEFERRED,
+    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     agency_name VARCHAR(255) NOT NULL,
     agency_url VARCHAR(500),
     agency_timezone VARCHAR(50) NOT NULL,
@@ -46,8 +46,8 @@ CREATE TABLE agency (
 -- Calendar table (service schedule patterns)
 CREATE TABLE calendar (
     service_id VARCHAR(50),
-    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id),
-    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id) DEFERRABLE INITIALLY DEFERRED,
+    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     monday SMALLINT CHECK (monday IN (0,1)),
     tuesday SMALLINT CHECK (tuesday IN (0,1)),
     wednesday SMALLINT CHECK (wednesday IN (0,1)),
@@ -63,8 +63,8 @@ CREATE TABLE calendar (
 -- Calendar dates (service exceptions)
 CREATE TABLE calendar_dates (
     service_id VARCHAR(50),
-    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id),
-    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id) DEFERRABLE INITIALLY DEFERRED,
+    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     date DATE NOT NULL,
     exception_type SMALLINT NOT NULL CHECK (exception_type IN (1,2)), -- 1=added, 2=removed
     PRIMARY KEY (service_id, source_id, version_id, date)
@@ -74,8 +74,8 @@ CREATE TABLE calendar_dates (
 -- Levels (for stations with multiple levels)
 CREATE TABLE levels (
     level_id VARCHAR(50),
-    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id),
-    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id) DEFERRABLE INITIALLY DEFERRED,
+    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     level_index NUMERIC,
     level_name VARCHAR(255),
     PRIMARY KEY (level_id, source_id, version_id)
@@ -84,8 +84,8 @@ CREATE TABLE levels (
 -- Stops table
 CREATE TABLE stops (
     stop_id VARCHAR(50),
-    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id),
-    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id) DEFERRABLE INITIALLY DEFERRED,
+    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     stop_name VARCHAR(255) NOT NULL,
     stop_lat NUMERIC(10,7),
     stop_lon NUMERIC(10,7),
@@ -94,20 +94,20 @@ CREATE TABLE stops (
     wheelchair_boarding SMALLINT DEFAULT 0 CHECK (wheelchair_boarding BETWEEN 0 AND 2),
     level_id VARCHAR(50),
     PRIMARY KEY (stop_id, source_id, version_id),
-    FOREIGN KEY (level_id, source_id, version_id) REFERENCES levels(level_id, source_id, version_id)
+    FOREIGN KEY (level_id, source_id, version_id) REFERENCES levels(level_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 -- Add parent station foreign key constraint (deferrable for bulk inserts)
 ALTER TABLE stops 
 ADD CONSTRAINT fk_stops_parent 
 FOREIGN KEY (parent_station, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id)
-DEFERRABLE INITIALLY IMMEDIATE;
+DEFERRABLE INITIALLY DEFERRED;
 
 -- Routes table
 CREATE TABLE routes (
     route_id VARCHAR(50),
-    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id),
-    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id) DEFERRABLE INITIALLY DEFERRED,
+    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     agency_id VARCHAR(50),
     route_short_name VARCHAR(50),
     route_long_name VARCHAR(255),
@@ -115,14 +115,14 @@ CREATE TABLE routes (
     route_color VARCHAR(6),
     route_text_color VARCHAR(6),
     PRIMARY KEY (route_id, source_id, version_id),
-    FOREIGN KEY (agency_id, source_id, version_id) REFERENCES agency(agency_id, source_id, version_id)
+    FOREIGN KEY (agency_id, source_id, version_id) REFERENCES agency(agency_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 -- Shapes table (route geometry)
 CREATE TABLE shapes (
     shape_id VARCHAR(50),
-    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id),
-    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id) DEFERRABLE INITIALLY DEFERRED,
+    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     shape_pt_lat NUMERIC(10,7) NOT NULL,
     shape_pt_lon NUMERIC(10,7) NOT NULL,
     shape_pt_sequence INTEGER NOT NULL,
@@ -130,14 +130,11 @@ CREATE TABLE shapes (
     PRIMARY KEY (shape_id, source_id, version_id, shape_pt_sequence)
 );
 
--- Ensure (shape_id, source_id, version_id) is unique for FK reference
-CREATE UNIQUE INDEX unique_shape_per_version ON shapes (shape_id, source_id, version_id);
-
 -- Trips table
 CREATE TABLE trips (
     trip_id VARCHAR(100),
-    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id),
-    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id) DEFERRABLE INITIALLY DEFERRED,
+    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     route_id VARCHAR(50) NOT NULL,
     service_id VARCHAR(50) NOT NULL,
     shape_id VARCHAR(50),
@@ -146,7 +143,7 @@ CREATE TABLE trips (
     block_id VARCHAR(50),
     wheelchair_accessible SMALLINT DEFAULT 0 CHECK (wheelchair_accessible BETWEEN 0 AND 2),
     PRIMARY KEY (trip_id, source_id, version_id),
-    FOREIGN KEY (route_id, source_id, version_id) REFERENCES routes(route_id, source_id, version_id)
+    FOREIGN KEY (route_id, source_id, version_id) REFERENCES routes(route_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED
     -- Note: No FK for service_id as it can exist in either calendar or calendar_dates
     -- Note: No FK for shape_id as some GTFS feeds have trips with shape_ids that don't exist in shapes.txt
 );
@@ -154,8 +151,8 @@ CREATE TABLE trips (
 -- Stop times table (largest table - optimized for queries)
 CREATE TABLE stop_times (
     trip_id VARCHAR(100),
-    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id),
-    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id) DEFERRABLE INITIALLY DEFERRED,
+    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     stop_id VARCHAR(50) NOT NULL,
     stop_sequence INTEGER NOT NULL,
     arrival_time TIME, -- Local time, interpret in agency's timezone
@@ -165,31 +162,31 @@ CREATE TABLE stop_times (
     drop_off_type SMALLINT DEFAULT 0 CHECK (drop_off_type BETWEEN 0 AND 3),
     shape_dist_traveled NUMERIC(10,2),
     PRIMARY KEY (trip_id, source_id, version_id, stop_sequence),
-    FOREIGN KEY (trip_id, source_id, version_id) REFERENCES trips(trip_id, source_id, version_id),
-    FOREIGN KEY (stop_id, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id)
+    FOREIGN KEY (trip_id, source_id, version_id) REFERENCES trips(trip_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (stop_id, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 -- Pathways table (connections between stops)
 CREATE TABLE pathways (
     pathway_id VARCHAR(50),
-    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id),
-    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id) DEFERRABLE INITIALLY DEFERRED,
+    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     from_stop_id VARCHAR(50) NOT NULL,
     to_stop_id VARCHAR(50) NOT NULL,
     pathway_mode SMALLINT NOT NULL CHECK (pathway_mode BETWEEN 1 AND 7),
     is_bidirectional SMALLINT CHECK (is_bidirectional IN (0,1)),
     traversal_time INTEGER,
     PRIMARY KEY (pathway_id, source_id, version_id),
-    FOREIGN KEY (from_stop_id, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id),
-    FOREIGN KEY (to_stop_id, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id)
+    FOREIGN KEY (from_stop_id, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (to_stop_id, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 -- Transfers table
 CREATE TABLE transfers (
     from_stop_id VARCHAR(50),
     to_stop_id VARCHAR(50),
-    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id),
-    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES transport_sources(source_id) DEFERRABLE INITIALLY DEFERRED,
+    version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     from_route_id VARCHAR(50),
     to_route_id VARCHAR(50),
     from_trip_id VARCHAR(100) NOT NULL DEFAULT '',
@@ -197,12 +194,12 @@ CREATE TABLE transfers (
     transfer_type SMALLINT DEFAULT 0 CHECK (transfer_type BETWEEN 0 AND 4),
     min_transfer_time INTEGER,
     PRIMARY KEY (from_stop_id, to_stop_id, source_id, version_id, from_trip_id, to_trip_id),
-    FOREIGN KEY (from_stop_id, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id),
-    FOREIGN KEY (to_stop_id, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id),
-    FOREIGN KEY (from_route_id, source_id, version_id) REFERENCES routes(route_id, source_id, version_id),
-    FOREIGN KEY (to_route_id, source_id, version_id) REFERENCES routes(route_id, source_id, version_id),
-    FOREIGN KEY (from_trip_id, source_id, version_id) REFERENCES trips(trip_id, source_id, version_id),
-    FOREIGN KEY (to_trip_id, source_id, version_id) REFERENCES trips(trip_id, source_id, version_id)
+    FOREIGN KEY (from_stop_id, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (to_stop_id, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (from_route_id, source_id, version_id) REFERENCES routes(route_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (to_route_id, source_id, version_id) REFERENCES routes(route_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (from_trip_id, source_id, version_id) REFERENCES trips(trip_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (to_trip_id, source_id, version_id) REFERENCES trips(trip_id, source_id, version_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 -- PTV transport source mapping
