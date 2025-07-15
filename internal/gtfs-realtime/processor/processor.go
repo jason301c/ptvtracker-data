@@ -160,9 +160,20 @@ func (p *Processor) processFeedMessage(result *consumer.FeedResult) error {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	// Send batch update notification after successful commit
+	entityCount := len(result.Message.Entity)
+	if entityCount > 0 {
+		if err := p.sendBatchNotification(result.Endpoint.FeedType, result.Endpoint.Source, versionID, entityCount); err != nil {
+			// Log error but don't fail the processing
+			p.logger.Error("Failed to send batch notification",
+				"endpoint", result.Endpoint.Name,
+				"error", err)
+		}
+	}
+
 	p.logger.Info("Processed feed message",
 		"endpoint", result.Endpoint.Name,
-		"entities", len(result.Message.Entity),
+		"entities", entityCount,
 		"feed_message_id", feedMessageID)
 
 	return nil
@@ -508,6 +519,38 @@ func (p *Processor) processTripUpdates(tx *sql.Tx, feedMessageID int, entities [
 			}
 		}
 	}
+
+	return nil
+}
+
+// sendBatchNotification calls the PostgreSQL function to send NOTIFY messages for batch updates
+func (p *Processor) sendBatchNotification(feedType, source string, versionID, recordCount int) error {
+	// Map feed type to table name
+	tableName := ""
+	switch feedType {
+	case "vehicle_positions":
+		tableName = "vehicle_positions"
+	case "trip_updates":
+		tableName = "trip_updates"
+	case "service_alerts":
+		tableName = "alerts"
+	default:
+		return fmt.Errorf("unknown feed type for notification: %s", feedType)
+	}
+
+	// Call the PostgreSQL function to send NOTIFY
+	_, err := p.db.Exec(`SELECT gtfs_rt.notify_batch_update($1, $2, $3, $4)`,
+		tableName, source, versionID, recordCount)
+	
+	if err != nil {
+		return fmt.Errorf("failed to send batch notification: %w", err)
+	}
+
+	p.logger.Debug("Sent batch notification",
+		"table", tableName,
+		"source", source,
+		"version_id", versionID,
+		"record_count", recordCount)
 
 	return nil
 }
