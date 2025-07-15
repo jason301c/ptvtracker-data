@@ -1,0 +1,48 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Output of build tools
+/build/
+/bin/
+
+# Go modules
+/go.sum
+
+# Dependency directories (vendor/)
+vendor/
+
+# Logs
+*.log
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test cache
+*.testcache
+
+# Coverage files
+*.coverprofile
+coverage.out
+
+# Misc
+.env
+.env.*
+
+# Claude
+.claude/
+.CLAUDE.md
