@@ -19,7 +19,8 @@ CREATE TABLE feed_messages (
     received_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, -- UTC
     source_id INTEGER NOT NULL REFERENCES gtfs.transport_sources(source_id),
     version_id INTEGER NOT NULL REFERENCES gtfs.versions(version_id),
-    UNIQUE(timestamp, source_id, version_id)
+    feed_type VARCHAR(20) NOT NULL, -- 'vehicle_positions', 'trip_updates', 'service_alerts'
+    UNIQUE(received_at, source_id, version_id, feed_type)
 );
 
 -- Vehicle positions
@@ -31,7 +32,7 @@ CREATE TABLE vehicle_positions (
     -- Trip descriptor
     trip_id VARCHAR(100),
     route_id VARCHAR(50),
-    start_time TIME, -- Local time, interpret in agency's timezone
+    start_time INTEGER, -- Seconds since midnight (can exceed 86400 for next-day services)
     start_date DATE,
     schedule_relationship SMALLINT DEFAULT 0, -- 0=SCHEDULED, 1=ADDED, 2=UNSCHEDULED, 3=CANCELED, 5=DUPLICATED, 6=DELETED
     -- Vehicle descriptor
@@ -59,7 +60,7 @@ CREATE TABLE trip_updates (
     trip_id VARCHAR(100) NOT NULL,
     route_id VARCHAR(50),
     direction_id SMALLINT,
-    start_time TIME, -- Local time, interpret in agency's timezone
+    start_time INTEGER, -- Seconds since midnight (can exceed 86400 for next-day services)
     start_date DATE,
     schedule_relationship SMALLINT DEFAULT 0, -- 0=SCHEDULED, 1=ADDED, 2=UNSCHEDULED, 3=CANCELED, 5=DUPLICATED, 6=DELETED
     -- Vehicle descriptor
@@ -120,7 +121,7 @@ CREATE TABLE alert_informed_entities (
     direction_id SMALLINT,
     trip_id VARCHAR(100),
     trip_route_id VARCHAR(50),
-    trip_start_time TIME, -- Local time, interpret in agency's timezone
+    trip_start_time INTEGER, -- Seconds since midnight (can exceed 86400 for next-day services)
     trip_start_date DATE,
     stop_id VARCHAR(50)
 );

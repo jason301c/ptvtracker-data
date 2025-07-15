@@ -60,3 +60,8 @@ func (db *DB) BeginTx(ctx context.Context) (*sql.Tx, error) {
 func (db *DB) Logger() logger.Logger {
 	return db.logger
 }
+
+// DB returns the underlying sql.DB connection
+func (db *DB) DB() *sql.DB {
+	return db.conn
+}

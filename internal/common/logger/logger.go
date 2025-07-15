@@ -31,6 +31,39 @@ func New(writers ...io.Writer) Logger {
 	return &loggerImpl{zl: zl}
 }
 
+// NewWithLevel creates a new logger instance with the given writers and log level
+func NewWithLevel(level string, writers ...io.Writer) Logger {
+	multi := io.MultiWriter(writers...)
+	
+	// Parse log level
+	logLevel := parseLogLevel(level)
+	
+	zl := zerolog.New(multi).With().Timestamp().Logger().Level(logLevel)
+	return &loggerImpl{zl: zl}
+}
+
+// parseLogLevel converts string log level to zerolog.Level
+func parseLogLevel(level string) zerolog.Level {
+	switch level {
+	case "debug":
+		return zerolog.DebugLevel
+	case "info":
+		return zerolog.InfoLevel
+	case "warn", "warning":
+		return zerolog.WarnLevel
+	case "error":
+		return zerolog.ErrorLevel
+	case "fatal":
+		return zerolog.FatalLevel
+	case "panic":
+		return zerolog.PanicLevel
+	case "disabled":
+		return zerolog.Disabled
+	default:
+		return zerolog.InfoLevel // default to info level
+	}
+}
+
 // ConsoleWriter returns a console writer
 func ConsoleWriter() io.Writer {
 	return zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}
