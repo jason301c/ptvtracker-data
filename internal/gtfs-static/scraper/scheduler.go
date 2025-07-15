@@ -26,12 +26,11 @@ type GTFSScheduler struct {
 	running bool
 }
 
+// Config for GTFSScheduler: single-source, URL-based
 type Config struct {
-	ResourceID    string
+	URL           string
 	CheckInterval time.Duration
 	DownloadDir   string
-	SourceID      int
-	SourceName    string
 }
 
 func NewScheduler(
@@ -62,9 +61,8 @@ func (s *GTFSScheduler) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	s.logger.Info("Starting GTFS scheduler",
-		"resource_id", s.config.ResourceID,
-		"check_interval", s.config.CheckInterval,
-		"source", s.config.SourceName)
+		"url", s.config.URL,
+		"check_interval", s.config.CheckInterval)
 
 	// Initial check
 	if err := s.checkAndUpdate(ctx); err != nil {
@@ -105,10 +103,10 @@ func (s *GTFSScheduler) Stop() error {
 }
 
 func (s *GTFSScheduler) checkAndUpdate(ctx context.Context) error {
-	s.logger.Debug("Checking for GTFS updates", "resource_id", s.config.ResourceID)
+	s.logger.Debug("Checking for GTFS updates", "url", s.config.URL)
 
-	// Fetch metadata
-	metadata, err := s.metadataFetcher.FetchMetadata(ctx, s.config.ResourceID)
+	// Fetch metadata using URL
+	metadata, err := s.metadataFetcher.FetchMetadata(ctx, s.config.URL)
 	if err != nil {
 		return fmt.Errorf("fetching metadata: %w", err)
 	}
@@ -130,8 +128,7 @@ func (s *GTFSScheduler) checkAndUpdate(ctx context.Context) error {
 	// Download the file
 	downloadPath := filepath.Join(
 		s.config.DownloadDir,
-		fmt.Sprintf("gtfs_%s_%s.zip",
-			s.config.SourceName,
+		fmt.Sprintf("gtfs_%s.zip",
 			metadata.LastModified.Time.Format("20060102_150405")),
 	)
 
@@ -141,8 +138,7 @@ func (s *GTFSScheduler) checkAndUpdate(ctx context.Context) error {
 	defer os.Remove(downloadPath) // Clean up after import
 
 	// Create new version
-	versionName := fmt.Sprintf("%s_%s",
-		s.config.SourceName,
+	versionName := fmt.Sprintf("gtfs_%s",
 		metadata.LastModified.Time.Format("2006-01-02_15:04:05"))
 
 	versionID, err := s.versionChecker.CreateNewVersion(
@@ -156,7 +152,7 @@ func (s *GTFSScheduler) checkAndUpdate(ctx context.Context) error {
 	}
 
 	// Import the data
-	imp := importer.NewImporter(s.database, s.config.SourceID, versionID)
+	imp := importer.NewImporter(s.database, 1, versionID) // SourceID hardcoded as 1
 	if err := imp.Import(ctx, downloadPath); err != nil {
 		s.logger.Error("Import failed, version will remain inactive",
 			"version_id", versionID,

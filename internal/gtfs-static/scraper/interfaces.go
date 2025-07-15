@@ -3,12 +3,12 @@ package scraper
 import (
 	"context"
 	"time"
-	
-	"github.com/ptvtracker-data/pkg/gtfs/models"
+
+	"github.com/ptvtracker-data/pkg/gtfs-static/models"
 )
 
 type MetadataFetcher interface {
-	FetchMetadata(ctx context.Context, resourceID string) (*models.DatasetMetadata, error)
+	FetchMetadata(ctx context.Context, url string) (*models.DatasetMetadata, error)
 }
 
 type VersionChecker interface {
