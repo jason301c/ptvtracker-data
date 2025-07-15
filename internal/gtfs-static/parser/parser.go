@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	
-	"github.com/ptvtracker-data/pkg/gtfs/models"
+
 	"github.com/ptvtracker-data/internal/common/logger"
+	"github.com/ptvtracker-data/pkg/gtfs-static/models"
 )
 
 type Parser struct {
@@ -24,17 +24,17 @@ func New(logger logger.Logger) *Parser {
 }
 
 type ParseCallbacks struct {
-	OnAgency      func(agency *models.Agency) error
-	OnStop        func(stop *models.Stop) error
-	OnRoute       func(route *models.Route) error
-	OnTrip        func(trip *models.Trip) error
-	OnStopTime    func(stopTime *models.StopTime) error
-	OnCalendar    func(calendar *models.Calendar) error
+	OnAgency       func(agency *models.Agency) error
+	OnStop         func(stop *models.Stop) error
+	OnRoute        func(route *models.Route) error
+	OnTrip         func(trip *models.Trip) error
+	OnStopTime     func(stopTime *models.StopTime) error
+	OnCalendar     func(calendar *models.Calendar) error
 	OnCalendarDate func(calendarDate *models.CalendarDate) error
-	OnShape       func(shape *models.Shape) error
-	OnLevel       func(level *models.Level) error
-	OnPathway     func(pathway *models.Pathway) error
-	OnTransfer    func(transfer *models.Transfer) error
+	OnShape        func(shape *models.Shape) error
+	OnLevel        func(level *models.Level) error
+	OnPathway      func(pathway *models.Pathway) error
+	OnTransfer     func(transfer *models.Transfer) error
 	OnFileComplete func(fileName string) error
 }
 
@@ -44,14 +44,14 @@ func (p *Parser) ParseZip(ctx context.Context, zipPath string, callbacks ParseCa
 		return fmt.Errorf("opening zip file: %w", err)
 	}
 	defer reader.Close()
-	
+
 	p.logger.Info("Parsing GTFS zip file", "path", zipPath, "files", len(reader.File))
-	
+
 	// Check if this is a Victorian nested GTFS structure
 	// Look for numbered folders with google_transit.zip files
 	hasNestedStructure := false
 	var nestedFile *zip.File
-	
+
 	for _, file := range reader.File {
 		if strings.HasSuffix(file.Name, "/google_transit.zip") {
 			// For metro source, use folder 2 (Metropolitan Train)
@@ -63,12 +63,12 @@ func (p *Parser) ParseZip(ctx context.Context, zipPath string, callbacks ParseCa
 			}
 		}
 	}
-	
+
 	if hasNestedStructure && nestedFile != nil {
 		p.logger.Info("Detected Victorian nested GTFS structure, parsing nested file", "file", nestedFile.Name)
 		return p.parseNestedGTFS(ctx, nestedFile, callbacks)
 	}
-	
+
 	// Standard GTFS parsing
 	return p.parseStandardGTFS(ctx, &reader.Reader, callbacks)
 }
@@ -80,19 +80,19 @@ func (p *Parser) parseNestedGTFS(ctx context.Context, zipFile *zip.File, callbac
 		return fmt.Errorf("opening nested zip: %w", err)
 	}
 	defer rc.Close()
-	
+
 	// Read the entire nested zip into memory
 	data, err := io.ReadAll(rc)
 	if err != nil {
 		return fmt.Errorf("reading nested zip: %w", err)
 	}
-	
+
 	// Create a reader for the nested zip
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return fmt.Errorf("creating zip reader: %w", err)
 	}
-	
+
 	// Parse the nested GTFS files
 	return p.parseStandardGTFS(ctx, reader, callbacks)
 }
@@ -112,13 +112,13 @@ func (p *Parser) parseStandardGTFS(ctx context.Context, reader *zip.Reader, call
 		"pathways.txt",
 		"transfers.txt",
 	}
-	
+
 	// Create a map for quick file lookup
 	fileMap := make(map[string]*zip.File)
 	for _, file := range reader.File {
 		fileMap[file.Name] = file
 	}
-	
+
 	// Parse files in order
 	for _, fileName := range parseOrder {
 		if file, exists := fileMap[fileName]; exists {
@@ -134,36 +134,36 @@ func (p *Parser) parseStandardGTFS(ctx context.Context, reader *zip.Reader, call
 			p.logger.Debug("File not found in archive", "file", fileName)
 		}
 	}
-	
+
 	p.logger.Info("GTFS parsing completed successfully")
 	return nil
 }
 
 func (p *Parser) parseFile(file *zip.File, callbacks ParseCallbacks) error {
 	p.logger.Debug("Parsing file", "name", file.Name, "size", file.UncompressedSize64)
-	
+
 	rc, err := file.Open()
 	if err != nil {
 		return fmt.Errorf("opening file: %w", err)
 	}
 	defer rc.Close()
-	
+
 	reader := csv.NewReader(rc)
 	reader.FieldsPerRecord = -1 // Variable number of fields
 	reader.TrimLeadingSpace = true
-	
+
 	// Read header
 	header, err := reader.Read()
 	if err != nil {
 		return fmt.Errorf("reading header: %w", err)
 	}
-	
+
 	// Create header index map
 	headerMap := make(map[string]int)
 	for i, h := range header {
 		headerMap[strings.TrimSpace(h)] = i
 	}
-	
+
 	// Parse records
 	count := 0
 	for {
@@ -174,7 +174,7 @@ func (p *Parser) parseFile(file *zip.File, callbacks ParseCallbacks) error {
 		if err != nil {
 			return fmt.Errorf("reading record: %w", err)
 		}
-		
+
 		switch file.Name {
 		case "agency.txt":
 			if callbacks.OnAgency != nil {
@@ -262,22 +262,22 @@ func (p *Parser) parseFile(file *zip.File, callbacks ParseCallbacks) error {
 				}
 			}
 		}
-		
+
 		count++
 		if count%10000 == 0 {
 			p.logger.Debug("Progress", "file", file.Name, "records", count)
 		}
 	}
-	
+
 	p.logger.Info("File parsed", "name", file.Name, "records", count)
-	
+
 	// Call file complete callback if provided
 	if callbacks.OnFileComplete != nil {
 		if err := callbacks.OnFileComplete(file.Name); err != nil {
 			return fmt.Errorf("file complete callback: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -382,12 +382,12 @@ func (p *Parser) parseCalendar(record []string, headerMap map[string]int) (*mode
 	if err != nil {
 		return nil, fmt.Errorf("parsing start_date: %w", err)
 	}
-	
+
 	endDate, err := time.Parse("20060102", p.getString(record, headerMap, "end_date"))
 	if err != nil {
 		return nil, fmt.Errorf("parsing end_date: %w", err)
 	}
-	
+
 	return &models.Calendar{
 		ServiceID: p.getString(record, headerMap, "service_id"),
 		Monday:    p.getInt(record, headerMap, "monday", 0),
@@ -407,7 +407,7 @@ func (p *Parser) parseCalendarDate(record []string, headerMap map[string]int) (*
 	if err != nil {
 		return nil, fmt.Errorf("parsing date: %w", err)
 	}
-	
+
 	return &models.CalendarDate{
 		ServiceID:     p.getString(record, headerMap, "service_id"),
 		Date:          date,

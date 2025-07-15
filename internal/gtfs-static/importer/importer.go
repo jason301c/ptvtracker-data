@@ -9,7 +9,7 @@ import (
 
 	"github.com/ptvtracker-data/internal/common/db"
 	"github.com/ptvtracker-data/internal/gtfs-static/parser"
-	"github.com/ptvtracker-data/pkg/gtfs/models"
+	"github.com/ptvtracker-data/pkg/gtfs-static/models"
 )
 
 type Importer struct {
