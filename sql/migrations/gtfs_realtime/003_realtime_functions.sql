@@ -99,7 +99,7 @@ CREATE OR REPLACE FUNCTION track_vehicle(
     p_version_id INTEGER DEFAULT NULL
 )
 RETURNS TABLE (
-    timestamp TIMESTAMP,
+    event_timestamp TIMESTAMP,
     trip_id VARCHAR(100),
     route_id VARCHAR(50),
     route_name VARCHAR(255),
@@ -118,7 +118,7 @@ BEGIN
         SELECT COALESCE(p_version_id, (SELECT v.version_id FROM gtfs.versions v WHERE v.is_active = TRUE LIMIT 1)) as vid
     )
     SELECT 
-        vp.timestamp,
+        vp.timestamp as event_timestamp,
         vp.trip_id,
         vp.route_id,
         COALESCE(r.route_short_name, r.route_long_name) as route_name,

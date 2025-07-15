@@ -1,6 +1,9 @@
 -- GTFS Static Tables with Blue-Green Deployment Support
 -- Tables structure for Melbourne's Public Transport data
 
+-- All TIMESTAMP columns use TIMESTAMPTZ (UTC).
+-- All TIME columns are local to the agency's timezone (see agency.agency_timezone).
+
 -- Create schema
 CREATE SCHEMA IF NOT EXISTS gtfs;
 SET search_path TO gtfs, public;
@@ -9,20 +12,22 @@ SET search_path TO gtfs, public;
 CREATE TABLE versions (
     version_id SERIAL PRIMARY KEY,
     version_name VARCHAR(100) NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, -- UTC
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, -- UTC
     is_active BOOLEAN DEFAULT FALSE,
     source_url TEXT,
-    description TEXT,
-    CONSTRAINT unique_active_version UNIQUE (is_active) WHERE is_active = TRUE
+    description TEXT
 );
+
+-- Only one version can be active at a time
+CREATE UNIQUE INDEX unique_active_version ON versions (is_active) WHERE is_active = TRUE;
 
 -- Transport sources lookup table
 CREATE TABLE transport_sources (
     source_id SERIAL PRIMARY KEY,
     source_name VARCHAR(50) NOT NULL UNIQUE, -- e.g., 'tram', 'train', 'bus'
     description TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP -- UTC
 );
 
 -- Agency table
@@ -124,6 +129,9 @@ CREATE TABLE shapes (
     PRIMARY KEY (shape_id, source_id, version_id, shape_pt_sequence)
 );
 
+-- Ensure (shape_id, source_id, version_id) is unique for FK reference
+CREATE UNIQUE INDEX unique_shape_per_version ON shapes (shape_id, source_id, version_id);
+
 -- Trips table
 CREATE TABLE trips (
     trip_id VARCHAR(100),
@@ -149,8 +157,8 @@ CREATE TABLE stop_times (
     version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
     stop_id VARCHAR(50) NOT NULL,
     stop_sequence INTEGER NOT NULL,
-    arrival_time TIME,
-    departure_time TIME,
+    arrival_time TIME, -- Local time, interpret in agency's timezone
+    departure_time TIME, -- Local time, interpret in agency's timezone
     stop_headsign VARCHAR(255),
     pickup_type SMALLINT DEFAULT 0 CHECK (pickup_type BETWEEN 0 AND 3),
     drop_off_type SMALLINT DEFAULT 0 CHECK (drop_off_type BETWEEN 0 AND 3),
@@ -183,11 +191,11 @@ CREATE TABLE transfers (
     version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
     from_route_id VARCHAR(50),
     to_route_id VARCHAR(50),
-    from_trip_id VARCHAR(100),
-    to_trip_id VARCHAR(100),
+    from_trip_id VARCHAR(100) NOT NULL DEFAULT '',
+    to_trip_id VARCHAR(100) NOT NULL DEFAULT '',
     transfer_type SMALLINT DEFAULT 0 CHECK (transfer_type BETWEEN 0 AND 4),
     min_transfer_time INTEGER,
-    PRIMARY KEY (from_stop_id, to_stop_id, source_id, version_id, COALESCE(from_trip_id, ''), COALESCE(to_trip_id, '')),
+    PRIMARY KEY (from_stop_id, to_stop_id, source_id, version_id, from_trip_id, to_trip_id),
     FOREIGN KEY (from_stop_id, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id),
     FOREIGN KEY (to_stop_id, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id),
     FOREIGN KEY (from_route_id, source_id, version_id) REFERENCES routes(route_id, source_id, version_id),

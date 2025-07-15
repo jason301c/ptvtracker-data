@@ -2,6 +2,10 @@
 -- For tracking real-time vehicle positions, trip updates, and service alerts
 -- Based on Victorian GTFS-realtime API endpoints
 
+-- All TIMESTAMP columns use TIMESTAMPTZ (UTC).
+-- All TIME columns are local to the agency's timezone (see gtfs.agency.agency_timezone).
+-- All BIGINT Unix timestamps are always UTC.
+
 -- Create realtime schema
 CREATE SCHEMA IF NOT EXISTS gtfs_rt;
 SET search_path TO gtfs_rt, gtfs, public;
@@ -9,10 +13,10 @@ SET search_path TO gtfs_rt, gtfs, public;
 -- Feed message metadata
 CREATE TABLE feed_messages (
     feed_message_id SERIAL PRIMARY KEY,
-    timestamp TIMESTAMP NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL, -- UTC
     gtfs_realtime_version VARCHAR(10),
     incrementality SMALLINT DEFAULT 0, -- 0=FULL_DATASET, 1=DIFFERENTIAL
-    received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, -- UTC
     source_id INTEGER NOT NULL REFERENCES gtfs.transport_sources(source_id),
     version_id INTEGER NOT NULL REFERENCES gtfs.versions(version_id),
     UNIQUE(timestamp, source_id, version_id)
@@ -27,7 +31,7 @@ CREATE TABLE vehicle_positions (
     -- Trip descriptor
     trip_id VARCHAR(100),
     route_id VARCHAR(50),
-    start_time TIME,
+    start_time TIME, -- Local time, interpret in agency's timezone
     start_date DATE,
     schedule_relationship SMALLINT DEFAULT 0, -- 0=SCHEDULED, 1=ADDED, 2=UNSCHEDULED, 3=CANCELED, 5=DUPLICATED, 6=DELETED
     -- Vehicle descriptor
@@ -41,7 +45,7 @@ CREATE TABLE vehicle_positions (
     -- Status
     current_status SMALLINT, -- 0=INCOMING_AT, 1=STOPPED_AT, 2=IN_TRANSIT_TO
     stop_id VARCHAR(50),
-    timestamp TIMESTAMP NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL, -- UTC
     UNIQUE(feed_message_id, entity_id)
 );
 
@@ -55,14 +59,14 @@ CREATE TABLE trip_updates (
     trip_id VARCHAR(100) NOT NULL,
     route_id VARCHAR(50),
     direction_id SMALLINT,
-    start_time TIME,
+    start_time TIME, -- Local time, interpret in agency's timezone
     start_date DATE,
     schedule_relationship SMALLINT DEFAULT 0, -- 0=SCHEDULED, 1=ADDED, 2=UNSCHEDULED, 3=CANCELED, 5=DUPLICATED, 6=DELETED
     -- Vehicle descriptor
     vehicle_id VARCHAR(100),
     vehicle_label VARCHAR(100),
     -- Update fields
-    timestamp TIMESTAMP,
+    timestamp TIMESTAMPTZ, -- UTC
     delay INTEGER, -- seconds
     UNIQUE(feed_message_id, entity_id)
 );
@@ -71,19 +75,19 @@ CREATE TABLE trip_updates (
 CREATE TABLE stop_time_updates (
     stop_time_update_id SERIAL PRIMARY KEY,
     trip_update_id INTEGER NOT NULL REFERENCES trip_updates(trip_update_id) ON DELETE CASCADE,
-    stop_sequence INTEGER,
-    stop_id VARCHAR(50),
+    stop_sequence INTEGER NOT NULL DEFAULT -1,
+    stop_id VARCHAR(50) NOT NULL DEFAULT '',
     -- Arrival info
     arrival_delay INTEGER, -- seconds (positive = late, negative = early)
-    arrival_time BIGINT, -- POSIX time
+    arrival_time BIGINT, -- POSIX time, always UTC
     arrival_uncertainty INTEGER,
     -- Departure info
     departure_delay INTEGER, -- seconds
-    departure_time BIGINT, -- POSIX time
+    departure_time BIGINT, -- POSIX time, always UTC
     departure_uncertainty INTEGER,
     -- Schedule relationship
     schedule_relationship SMALLINT DEFAULT 0, -- 0=SCHEDULED, 1=ADDED, 2=UNSCHEDULED, 3=CANCELED, 5=DUPLICATED, 6=DELETED
-    UNIQUE(trip_update_id, COALESCE(stop_sequence, -1), COALESCE(stop_id, ''))
+    UNIQUE(trip_update_id, stop_sequence, stop_id)
 );
 
 -- Service alerts
@@ -103,8 +107,8 @@ CREATE TABLE alerts (
 CREATE TABLE alert_active_periods (
     alert_active_period_id SERIAL PRIMARY KEY,
     alert_id INTEGER NOT NULL REFERENCES alerts(alert_id) ON DELETE CASCADE,
-    start_time BIGINT, -- POSIX time
-    end_time BIGINT -- POSIX time
+    start_time BIGINT, -- POSIX time, always UTC
+    end_time BIGINT -- POSIX time, always UTC
 );
 
 -- Alert informed entities (what the alert affects)
@@ -116,7 +120,7 @@ CREATE TABLE alert_informed_entities (
     direction_id SMALLINT,
     trip_id VARCHAR(100),
     trip_route_id VARCHAR(50),
-    trip_start_time TIME,
+    trip_start_time TIME, -- Local time, interpret in agency's timezone
     trip_start_date DATE,
     stop_id VARCHAR(50)
 );

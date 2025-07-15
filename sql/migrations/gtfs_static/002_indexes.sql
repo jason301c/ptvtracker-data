@@ -64,13 +64,9 @@ CREATE INDEX idx_stops_version_source ON stops(version_id, source_id);
 CREATE INDEX idx_routes_version_source ON routes(version_id, source_id);
 CREATE INDEX idx_trips_version_route ON trips(version_id, route_id);
 
--- Partial indexes for active version queries
-CREATE INDEX idx_stops_active_version ON stops(stop_id, source_id) 
-WHERE version_id IN (SELECT version_id FROM versions WHERE is_active = TRUE);
-
-CREATE INDEX idx_routes_active_version ON routes(route_id, source_id) 
-WHERE version_id IN (SELECT version_id FROM versions WHERE is_active = TRUE);
-
 -- Spatial index with PostGIS (uncomment if PostGIS is available)
-CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE INDEX idx_stops_geom ON stops USING GIST (ST_Point(stop_lon, stop_lat));
+-- CREATE EXTENSION IF NOT EXISTS postgis;
+-- CREATE INDEX idx_stops_geom ON stops USING GIST (ST_Point(stop_lon, stop_lat));
+
+CREATE INDEX idx_stops_version_id ON stops(version_id, stop_id, source_id);
+CREATE INDEX idx_routes_version_id ON routes(version_id, route_id, source_id);
