@@ -24,6 +24,11 @@ func New(connStr string, logger logger.Logger) (*DB, error) {
 		return nil, fmt.Errorf("pinging database: %w", err)
 	}
 
+	// Set search_path to include gtfs schema for earthdistance extension
+	if _, err := conn.Exec("SET search_path TO gtfs, public"); err != nil {
+		return nil, fmt.Errorf("setting search path: %w", err)
+	}
+
 	logger.Info("Database connection established")
 
 	return &DB{
@@ -37,7 +42,18 @@ func (db *DB) Close() error {
 }
 
 func (db *DB) BeginTx(ctx context.Context) (*sql.Tx, error) {
-	return db.conn.BeginTx(ctx, nil)
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Set search_path for this transaction
+	if _, err := tx.Exec("SET search_path TO gtfs, public"); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("setting search path for transaction: %w", err)
+	}
+	
+	return tx, nil
 }
 
 // Logger returns the logger instance

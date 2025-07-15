@@ -11,12 +11,18 @@ WHERE is_active = TRUE;
 
 -- Helper views for common queries using active version
 CREATE OR REPLACE VIEW active_services AS
+-- Get all service_ids from both calendar and calendar_dates
+WITH all_services AS (
+    SELECT DISTINCT service_id, source_id, version_id
+    FROM calendar
+    UNION
+    SELECT DISTINCT service_id, source_id, version_id
+    FROM calendar_dates
+)
 SELECT DISTINCT s.service_id, s.source_id, ts.source_name
-FROM calendar s
+FROM all_services s
 JOIN transport_sources ts ON s.source_id = ts.source_id
-JOIN active_version av ON s.version_id = av.version_id
-WHERE s.end_date >= CURRENT_DATE 
-  AND s.start_date <= CURRENT_DATE;
+JOIN active_version av ON s.version_id = av.version_id;
 
 CREATE OR REPLACE VIEW active_stops AS
 SELECT s.*, ts.source_name
@@ -111,19 +117,28 @@ JOIN active_version av ON st1.version_id = av.version_id;
 
 -- Service calendar overview for active version
 CREATE OR REPLACE VIEW service_calendar_overview AS
+WITH all_services AS (
+    -- Get all services from both calendar and calendar_dates
+    SELECT DISTINCT service_id, source_id, version_id FROM calendar
+    UNION
+    SELECT DISTINCT service_id, source_id, version_id FROM calendar_dates
+)
 SELECT 
-    c.service_id,
+    s.service_id,
     ts.source_name,
     c.monday, c.tuesday, c.wednesday, c.thursday, c.friday, c.saturday, c.sunday,
     c.start_date,
     c.end_date,
     COUNT(DISTINCT cd.date) FILTER (WHERE cd.exception_type = 1) as added_dates,
     COUNT(DISTINCT cd.date) FILTER (WHERE cd.exception_type = 2) as removed_dates
-FROM calendar c
-JOIN transport_sources ts ON c.source_id = ts.source_id
-JOIN active_version av ON c.version_id = av.version_id
-LEFT JOIN calendar_dates cd ON c.service_id = cd.service_id 
-    AND c.source_id = cd.source_id 
-    AND c.version_id = cd.version_id
-GROUP BY c.service_id, ts.source_name, c.monday, c.tuesday, c.wednesday, 
+FROM all_services s
+JOIN transport_sources ts ON s.source_id = ts.source_id
+JOIN active_version av ON s.version_id = av.version_id
+LEFT JOIN calendar c ON s.service_id = c.service_id 
+    AND s.source_id = c.source_id 
+    AND s.version_id = c.version_id
+LEFT JOIN calendar_dates cd ON s.service_id = cd.service_id 
+    AND s.source_id = cd.source_id 
+    AND s.version_id = cd.version_id
+GROUP BY s.service_id, ts.source_name, c.monday, c.tuesday, c.wednesday, 
          c.thursday, c.friday, c.saturday, c.sunday, c.start_date, c.end_date;

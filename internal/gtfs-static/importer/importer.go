@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	
-	"github.com/ptvtracker-data/pkg/gtfs/models"
-	"github.com/ptvtracker-data/internal/gtfs-static/parser"
+
 	"github.com/ptvtracker-data/internal/common/db"
+	"github.com/ptvtracker-data/internal/gtfs-static/parser"
+	"github.com/ptvtracker-data/pkg/gtfs/models"
 )
 
 type Importer struct {
@@ -30,20 +30,41 @@ func NewImporter(database *db.DB, sourceID, versionID int) *Importer {
 
 func (i *Importer) Import(ctx context.Context, zipPath string) error {
 	p := parser.New(i.db.Logger())
-	
+
 	// Create batch inserters
-	agencyBatch := i.newBatchInserter("agency", 6)
-	stopBatch := i.newBatchInserter("stops", 8)
-	routeBatch := i.newBatchInserter("routes", 7)
-	calendarBatch := i.newBatchInserter("calendar", 11)
+	agencyBatch := i.newBatchInserter("agency", 8)
+	stopBatch := i.newBatchInserter("stops", 10)
+
+	// Track if we need to defer foreign key checks
+	var deferredConstraints bool
+	routeBatch := i.newBatchInserter("routes", 9)
+	calendarBatch := i.newBatchInserter("calendar", 12)
 	calendarDateBatch := i.newBatchInserter("calendar_dates", 5)
-	shapeBatch := i.newBatchInserter("shapes", 6)
-	tripBatch := i.newBatchInserter("trips", 8)
-	stopTimeBatch := i.newBatchInserter("stop_times", 10)
+	shapeBatch := i.newBatchInserter("shapes", 7)
+	tripBatch := i.newBatchInserter("trips", 10)
+	stopTimeBatch := i.newBatchInserter("stop_times", 11)
 	levelBatch := i.newBatchInserter("levels", 5)
 	pathwayBatch := i.newBatchInserter("pathways", 8)
 	transferBatch := i.newBatchInserter("transfers", 10)
-	
+
+	// Begin transaction
+	tx, err := i.db.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Set transaction for all batch inserters
+	batches := []*batchInserter{
+		agencyBatch, levelBatch, stopBatch, routeBatch, calendarBatch,
+		calendarDateBatch, shapeBatch, tripBatch, stopTimeBatch,
+		pathwayBatch, transferBatch,
+	}
+
+	for _, batch := range batches {
+		batch.tx = tx
+	}
+
 	callbacks := parser.ParseCallbacks{
 		OnAgency: func(agency *models.Agency) error {
 			return agencyBatch.Add(
@@ -147,7 +168,7 @@ func (i *Importer) Import(ctx context.Context, zipPath string) error {
 					departureTime = sql.NullTime{Time: t, Valid: true}
 				}
 			}
-			
+
 			return stopTimeBatch.Add(
 				stopTime.TripID,
 				i.sourceID,
@@ -192,7 +213,7 @@ func (i *Importer) Import(ctx context.Context, zipPath string) error {
 			if toTripID == "" {
 				toTripID = ""
 			}
-			
+
 			return transferBatch.Add(
 				transfer.FromStopID,
 				transfer.ToStopID,
@@ -206,58 +227,98 @@ func (i *Importer) Import(ctx context.Context, zipPath string) error {
 				sql.NullInt64{Int64: int64(transfer.MinTransferTime), Valid: transfer.MinTransferTime != 0},
 			)
 		},
+		OnFileComplete: func(fileName string) error {
+			// Flush ALL batches after each file to ensure referential integrity
+			batches := map[string]*batchInserter{
+				"agency.txt":         agencyBatch,
+				"levels.txt":         levelBatch,
+				"calendar.txt":       calendarBatch,
+				"calendar_dates.txt": calendarDateBatch,
+				"routes.txt":         routeBatch,
+				"shapes.txt":         shapeBatch,
+				"trips.txt":          tripBatch,
+				"stop_times.txt":     stopTimeBatch,
+				"pathways.txt":       pathwayBatch,
+				"transfers.txt":      transferBatch,
+			}
+
+			// Special handling for specific files
+			switch fileName {
+			case "stops.txt":
+				// Defer the parent station constraint to allow stops to be inserted in any order
+				if !deferredConstraints {
+					if _, err := tx.Exec("SET CONSTRAINTS gtfs.fk_stops_parent DEFERRED"); err != nil {
+						// If this fails, it's okay - the constraint might not exist or might not be deferrable
+						i.db.Logger().Warn("Could not defer stops parent constraint", "error", err)
+					}
+					deferredConstraints = true
+				}
+			case "routes.txt":
+				// Trips depend on routes
+				if err := routeBatch.Flush(); err != nil {
+					return fmt.Errorf("flushing routes batch: %w", err)
+				}
+			case "shapes.txt":
+				// Trips depend on shapes
+				if err := shapeBatch.Flush(); err != nil {
+					return fmt.Errorf("flushing shapes batch: %w", err)
+				}
+			case "trips.txt":
+				// Stop times depend on trips
+				i.db.Logger().Info("Flushing trips", "current_batch", tripBatch.valueCount, "total_processed", tripBatch.totalCount)
+				if err := tripBatch.Flush(); err != nil {
+					return fmt.Errorf("flushing trips batch: %w", err)
+				}
+			}
+
+			// Always flush the corresponding batch after file completion
+			if batch, exists := batches[fileName]; exists && batch != nil {
+				i.db.Logger().Info("Final flush for file",
+					"file", fileName,
+					"current_batch", batch.valueCount,
+					"total_processed", batch.totalCount)
+				if err := batch.Flush(); err != nil {
+					return fmt.Errorf("final flush for %s: %w", fileName, err)
+				}
+			}
+
+			return nil
+		},
 	}
-	
-	// Begin transaction
-	tx, err := i.db.BeginTx(ctx)
-	if err != nil {
-		return fmt.Errorf("beginning transaction: %w", err)
-	}
-	defer tx.Rollback()
-	
-	// Set transaction for all batch inserters
-	batches := []*batchInserter{
-		agencyBatch, levelBatch, stopBatch, routeBatch, calendarBatch,
-		calendarDateBatch, shapeBatch, tripBatch, stopTimeBatch,
-		pathwayBatch, transferBatch,
-	}
-	
-	for _, batch := range batches {
-		batch.tx = tx
-	}
-	
+
 	// Parse the zip file
 	if err := p.ParseZip(ctx, zipPath, callbacks); err != nil {
 		return fmt.Errorf("parsing zip: %w", err)
 	}
-	
+
 	// Flush all remaining batches
 	for _, batch := range batches {
 		if err := batch.Flush(); err != nil {
 			return fmt.Errorf("flushing %s batch: %w", batch.tableName, err)
 		}
 	}
-	
+
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
 	}
-	
-	i.db.Logger().Info("Import completed successfully", 
+
+	i.db.Logger().Info("Import completed successfully",
 		"source_id", i.sourceID,
 		"version_id", i.versionID)
-	
+
 	return nil
 }
 
 type batchInserter struct {
-	tableName   string
-	columns     []string
-	values      []interface{}
-	valueCount  int
-	batchSize   int
-	tx          *sql.Tx
-	fieldCount  int
+	tableName  string
+	columns    []string
+	values     []interface{}
+	valueCount int
+	totalCount int // Track total records processed
+	batchSize  int
+	tx         *sql.Tx
+	fieldCount int
 }
 
 func (i *Importer) newBatchInserter(tableName string, fieldCount int) *batchInserter {
@@ -274,11 +335,12 @@ func (i *Importer) newBatchInserter(tableName string, fieldCount int) *batchInse
 func (b *batchInserter) Add(values ...interface{}) error {
 	b.values = append(b.values, values...)
 	b.valueCount++
-	
+	b.totalCount++
+
 	if b.valueCount >= b.batchSize {
 		return b.Flush()
 	}
-	
+
 	return nil
 }
 
@@ -286,27 +348,27 @@ func (b *batchInserter) Flush() error {
 	if b.valueCount == 0 {
 		return nil
 	}
-	
+
 	query := b.buildInsertQuery()
 	_, err := b.tx.Exec(query, b.values...)
 	if err != nil {
 		return fmt.Errorf("executing batch insert: %w", err)
 	}
-	
+
 	// Reset
 	b.values = b.values[:0]
 	b.valueCount = 0
-	
+
 	return nil
 }
 
 func (b *batchInserter) buildInsertQuery() string {
 	var sb strings.Builder
-	
+
 	sb.WriteString(fmt.Sprintf("INSERT INTO gtfs.%s (%s) VALUES ",
 		b.tableName,
 		strings.Join(b.columns, ", ")))
-	
+
 	for i := 0; i < b.valueCount; i++ {
 		if i > 0 {
 			sb.WriteString(", ")
@@ -320,9 +382,9 @@ func (b *batchInserter) buildInsertQuery() string {
 		}
 		sb.WriteString(")")
 	}
-	
+
 	sb.WriteString(" ON CONFLICT DO NOTHING")
-	
+
 	return sb.String()
 }
 
@@ -361,18 +423,18 @@ func parseGTFSTime(timeStr string) (time.Time, error) {
 	if len(parts) != 3 {
 		return time.Time{}, fmt.Errorf("invalid time format: %s", timeStr)
 	}
-	
+
 	// For now, we'll use a base date and parse as a regular time
 	// In production, you might want to handle times > 24:00:00 differently
 	baseDate := "2006-01-02 "
 	normalizedTime := timeStr
-	
+
 	// Handle times >= 24:00:00 by converting to next day
 	// This is a simplified approach - you may need more sophisticated handling
 	t, err := time.Parse("2006-01-02 15:04:05", baseDate+normalizedTime)
 	if err != nil {
 		return time.Time{}, err
 	}
-	
+
 	return t, nil
 }

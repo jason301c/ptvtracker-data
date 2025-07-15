@@ -2,6 +2,7 @@ package parser
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/csv"
 	"fmt"
@@ -34,6 +35,7 @@ type ParseCallbacks struct {
 	OnLevel       func(level *models.Level) error
 	OnPathway     func(pathway *models.Pathway) error
 	OnTransfer    func(transfer *models.Transfer) error
+	OnFileComplete func(fileName string) error
 }
 
 func (p *Parser) ParseZip(ctx context.Context, zipPath string, callbacks ParseCallbacks) error {
@@ -45,6 +47,57 @@ func (p *Parser) ParseZip(ctx context.Context, zipPath string, callbacks ParseCa
 	
 	p.logger.Info("Parsing GTFS zip file", "path", zipPath, "files", len(reader.File))
 	
+	// Check if this is a Victorian nested GTFS structure
+	// Look for numbered folders with google_transit.zip files
+	hasNestedStructure := false
+	var nestedFile *zip.File
+	
+	for _, file := range reader.File {
+		if strings.HasSuffix(file.Name, "/google_transit.zip") {
+			// For metro source, use folder 2 (Metropolitan Train)
+			// TODO: Make this configurable based on source mapping
+			if strings.HasPrefix(file.Name, "2/") {
+				hasNestedStructure = true
+				nestedFile = file
+				break
+			}
+		}
+	}
+	
+	if hasNestedStructure && nestedFile != nil {
+		p.logger.Info("Detected Victorian nested GTFS structure, parsing nested file", "file", nestedFile.Name)
+		return p.parseNestedGTFS(ctx, nestedFile, callbacks)
+	}
+	
+	// Standard GTFS parsing
+	return p.parseStandardGTFS(ctx, &reader.Reader, callbacks)
+}
+
+func (p *Parser) parseNestedGTFS(ctx context.Context, zipFile *zip.File, callbacks ParseCallbacks) error {
+	// Open the nested zip file
+	rc, err := zipFile.Open()
+	if err != nil {
+		return fmt.Errorf("opening nested zip: %w", err)
+	}
+	defer rc.Close()
+	
+	// Read the entire nested zip into memory
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return fmt.Errorf("reading nested zip: %w", err)
+	}
+	
+	// Create a reader for the nested zip
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return fmt.Errorf("creating zip reader: %w", err)
+	}
+	
+	// Parse the nested GTFS files
+	return p.parseStandardGTFS(ctx, reader, callbacks)
+}
+
+func (p *Parser) parseStandardGTFS(ctx context.Context, reader *zip.Reader, callbacks ParseCallbacks) error {
 	// Define parsing order for referential integrity
 	parseOrder := []string{
 		"agency.txt",
@@ -217,6 +270,14 @@ func (p *Parser) parseFile(file *zip.File, callbacks ParseCallbacks) error {
 	}
 	
 	p.logger.Info("File parsed", "name", file.Name, "records", count)
+	
+	// Call file complete callback if provided
+	if callbacks.OnFileComplete != nil {
+		if err := callbacks.OnFileComplete(file.Name); err != nil {
+			return fmt.Errorf("file complete callback: %w", err)
+		}
+	}
+	
 	return nil
 }
 

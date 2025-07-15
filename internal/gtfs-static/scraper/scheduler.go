@@ -156,8 +156,8 @@ func (s *GTFSScheduler) checkAndUpdate(ctx context.Context) error {
 	}
 
 	// Import the data
-	importer := importer.NewImporter(s.database, s.config.SourceID, versionID)
-	if err := importer.Import(ctx, downloadPath); err != nil {
+	imp := importer.NewImporter(s.database, s.config.SourceID, versionID)
+	if err := imp.Import(ctx, downloadPath); err != nil {
 		s.logger.Error("Import failed, version will remain inactive",
 			"version_id", versionID,
 			"error", err)

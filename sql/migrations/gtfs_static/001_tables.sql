@@ -67,8 +67,8 @@ CREATE TABLE calendar_dates (
     version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE,
     date DATE NOT NULL,
     exception_type SMALLINT NOT NULL CHECK (exception_type IN (1,2)), -- 1=added, 2=removed
-    PRIMARY KEY (service_id, source_id, version_id, date),
-    FOREIGN KEY (service_id, source_id, version_id) REFERENCES calendar(service_id, source_id, version_id)
+    PRIMARY KEY (service_id, source_id, version_id, date)
+    -- Note: No FK to calendar as service_id can exist in either calendar or calendar_dates
 );
 
 -- Levels (for stations with multiple levels)
@@ -97,10 +97,11 @@ CREATE TABLE stops (
     FOREIGN KEY (level_id, source_id, version_id) REFERENCES levels(level_id, source_id, version_id)
 );
 
--- Add parent station foreign key constraint
+-- Add parent station foreign key constraint (deferrable for bulk inserts)
 ALTER TABLE stops 
 ADD CONSTRAINT fk_stops_parent 
-FOREIGN KEY (parent_station, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id);
+FOREIGN KEY (parent_station, source_id, version_id) REFERENCES stops(stop_id, source_id, version_id)
+DEFERRABLE INITIALLY IMMEDIATE;
 
 -- Routes table
 CREATE TABLE routes (
@@ -145,9 +146,9 @@ CREATE TABLE trips (
     block_id VARCHAR(50),
     wheelchair_accessible SMALLINT DEFAULT 0 CHECK (wheelchair_accessible BETWEEN 0 AND 2),
     PRIMARY KEY (trip_id, source_id, version_id),
-    FOREIGN KEY (route_id, source_id, version_id) REFERENCES routes(route_id, source_id, version_id),
-    FOREIGN KEY (service_id, source_id, version_id) REFERENCES calendar(service_id, source_id, version_id),
-    FOREIGN KEY (shape_id, source_id, version_id) REFERENCES shapes(shape_id, source_id, version_id)
+    FOREIGN KEY (route_id, source_id, version_id) REFERENCES routes(route_id, source_id, version_id)
+    -- Note: No FK for service_id as it can exist in either calendar or calendar_dates
+    -- Note: No FK for shape_id as some GTFS feeds have trips with shape_ids that don't exist in shapes.txt
 );
 
 -- Stop times table (largest table - optimized for queries)
