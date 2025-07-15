@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -158,16 +159,16 @@ func (i *Importer) Import(ctx context.Context, zipPath string) error {
 			)
 		},
 		OnStopTime: func(stopTime *models.StopTime) error {
-			// Convert time strings to sql.NullTime
-			var arrivalTime, departureTime sql.NullTime
+			// Convert time strings to seconds since midnight
+			var arrivalSec, departureSec sql.NullInt64
 			if stopTime.ArrivalTime != "" {
-				if t, err := parseGTFSTime(stopTime.ArrivalTime); err == nil {
-					arrivalTime = sql.NullTime{Time: t, Valid: true}
+				if s, err := parseGTFSTimeToSeconds(stopTime.ArrivalTime); err == nil {
+					arrivalSec = sql.NullInt64{Int64: int64(s), Valid: true}
 				}
 			}
 			if stopTime.DepartureTime != "" {
-				if t, err := parseGTFSTime(stopTime.DepartureTime); err == nil {
-					departureTime = sql.NullTime{Time: t, Valid: true}
+				if s, err := parseGTFSTimeToSeconds(stopTime.DepartureTime); err == nil {
+					departureSec = sql.NullInt64{Int64: int64(s), Valid: true}
 				}
 			}
 
@@ -177,8 +178,8 @@ func (i *Importer) Import(ctx context.Context, zipPath string) error {
 				i.versionID,
 				stopTime.StopID,
 				stopTime.StopSequence,
-				arrivalTime,
-				departureTime,
+				arrivalSec,
+				departureSec,
 				sql.NullString{String: stopTime.StopHeadsign, Valid: stopTime.StopHeadsign != ""},
 				stopTime.PickupType,
 				stopTime.DropOffType,
@@ -352,7 +353,7 @@ func getColumnsForTable(tableName string) []string {
 	case "trips":
 		return []string{"trip_id", "source_id", "version_id", "route_id", "service_id", "shape_id", "trip_headsign", "direction_id", "block_id", "wheelchair_accessible"}
 	case "stop_times":
-		return []string{"trip_id", "source_id", "version_id", "stop_id", "stop_sequence", "arrival_time", "departure_time", "stop_headsign", "pickup_type", "drop_off_type", "shape_dist_traveled"}
+		return []string{"trip_id", "source_id", "version_id", "stop_id", "stop_sequence", "arrival_time_seconds", "departure_time_seconds", "stop_headsign", "pickup_type", "drop_off_type", "shape_dist_traveled"}
 	case "levels":
 		return []string{"level_id", "source_id", "version_id", "level_index", "level_name"}
 	case "pathways":
@@ -362,6 +363,32 @@ func getColumnsForTable(tableName string) []string {
 	default:
 		return nil
 	}
+}
+
+func parseGTFSTimeToSeconds(timeStr string) (int, error) {
+	// GTFS times can be in format HH:MM:SS and can exceed 24:00:00
+	parts := strings.Split(timeStr, ":")
+	if len(parts) != 3 {
+		return 0, fmt.Errorf("invalid time format: %s", timeStr)
+	}
+
+	// Parse hours, minutes, seconds
+	h, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, fmt.Errorf("invalid hours in time format: %s", timeStr)
+	}
+	m, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, fmt.Errorf("invalid minutes in time format: %s", timeStr)
+	}
+	s, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return 0, fmt.Errorf("invalid seconds in time format: %s", timeStr)
+	}
+
+	// Convert to seconds since midnight
+	// This correctly handles times > 24:00:00 for next-day services
+	return h*3600 + m*60 + s, nil
 }
 
 func parseGTFSTime(timeStr string) (time.Time, error) {

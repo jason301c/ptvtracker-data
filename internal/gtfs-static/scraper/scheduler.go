@@ -41,12 +41,14 @@ func NewScheduler(
 	config Config,
 	database *db.DB,
 	logger logger.Logger,
+	metadataFetcher MetadataFetcher, // Use the interface
+	downloader Downloader, // Use the interface
 ) *GTFSScheduler {
 	return &GTFSScheduler{
 		config:          config,
-		metadataFetcher: NewHTTPMetadataFetcher(logger),
+		metadataFetcher: metadataFetcher,
 		versionChecker:  db.NewVersionChecker(database),
-		downloader:      NewHTTPDownloader(logger),
+		downloader:      downloader,
 		database:        database,
 		logger:          logger,
 	}

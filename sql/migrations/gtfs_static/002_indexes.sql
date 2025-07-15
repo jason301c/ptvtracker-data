@@ -18,8 +18,8 @@ USING GIST (ll_to_earth(stop_lat, stop_lon))
 WHERE stop_lat IS NOT NULL AND stop_lon IS NOT NULL;
 
 -- Stop times indexes (critical for performance)
-CREATE INDEX idx_stop_times_arrival ON stop_times(version_id, arrival_time);
-CREATE INDEX idx_stop_times_departure ON stop_times(version_id, departure_time);
+CREATE INDEX idx_stop_times_arrival ON stop_times(version_id, arrival_time_seconds);
+CREATE INDEX idx_stop_times_departure ON stop_times(version_id, departure_time_seconds);
 CREATE INDEX idx_stop_times_stop_id ON stop_times(stop_id, source_id, version_id);
 CREATE INDEX idx_stop_times_trip_stop ON stop_times(trip_id, source_id, version_id, stop_sequence);
 

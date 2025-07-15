@@ -155,8 +155,8 @@ CREATE TABLE stop_times (
     version_id INTEGER NOT NULL REFERENCES versions(version_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     stop_id VARCHAR(50) NOT NULL,
     stop_sequence INTEGER NOT NULL,
-    arrival_time TIME, -- Local time, interpret in agency's timezone
-    departure_time TIME, -- Local time, interpret in agency's timezone
+    arrival_time_seconds INTEGER, -- Seconds since midnight (can be > 86400 for next-day services)
+    departure_time_seconds INTEGER, -- Seconds since midnight (can be > 86400 for next-day services)
     stop_headsign VARCHAR(255),
     pickup_type SMALLINT DEFAULT 0 CHECK (pickup_type BETWEEN 0 AND 3),
     drop_off_type SMALLINT DEFAULT 0 CHECK (drop_off_type BETWEEN 0 AND 3),
