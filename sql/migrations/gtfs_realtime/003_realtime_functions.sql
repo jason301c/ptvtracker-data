@@ -15,6 +15,7 @@ RETURNS TABLE (
     route_id VARCHAR(50),
     route_short_name VARCHAR(50),
     route_long_name VARCHAR(255),
+    route_type SMALLINT, -- Added field
     trip_headsign VARCHAR(255),
     scheduled_arrival TIME,
     predicted_arrival TIMESTAMP,
@@ -35,6 +36,7 @@ BEGIN
             t.route_id,
             r.route_short_name,
             r.route_long_name,
+            r.route_type, -- Added field
             t.trip_headsign,
             st.arrival_time,
             st.source_id,
@@ -75,6 +77,7 @@ BEGIN
         ss.route_id,
         ss.route_short_name,
         ss.route_long_name,
+        ss.route_type, -- Added field
         ss.trip_headsign,
         ss.arrival_time as scheduled_arrival,
         COALESCE(
