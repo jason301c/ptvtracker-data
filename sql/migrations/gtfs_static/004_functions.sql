@@ -82,67 +82,12 @@ BEGIN
     JOIN transport_sources ts ON s.source_id = ts.source_id
     JOIN target_version tv ON s.version_id = tv.vid
     WHERE 
+		s.location_type = 0
+		AND
         -- Full text search OR trigram similarity
         (to_tsvector('english', s.stop_name) @@ plainto_tsquery('english', query_text)
          OR similarity(s.stop_name, query_text) > 0.3)
     ORDER BY relevance_score DESC, s.stop_name
-    LIMIT max_results;
-END;
-$$ LANGUAGE plpgsql;
-
--- Enhanced search function for routes (version-aware)
-CREATE OR REPLACE FUNCTION search_routes(
-    query_text TEXT, 
-    max_results INTEGER DEFAULT 10,
-    use_version_id INTEGER DEFAULT NULL
-)
-RETURNS TABLE (
-    route_id VARCHAR(50),
-    source_id INTEGER,
-    version_id INTEGER,
-    source_name VARCHAR(50),
-    route_short_name VARCHAR(50),
-    route_long_name VARCHAR(255),
-    route_type SMALLINT,
-    relevance_score REAL
-) AS $$
-BEGIN
-    RETURN QUERY
-    WITH target_version AS (
-        SELECT COALESCE(use_version_id, (SELECT v.version_id FROM versions v WHERE v.is_active = TRUE LIMIT 1)) as vid
-    )
-    SELECT 
-        r.route_id,
-        r.source_id,
-        r.version_id,
-        ts.source_name,
-        r.route_short_name,
-        r.route_long_name,
-        r.route_type,
-        (
-            -- Exact short name match (highest priority)
-            CASE WHEN lower(r.route_short_name) = lower(query_text) THEN 2.0
-            -- Exact long name match
-            WHEN lower(r.route_long_name) = lower(query_text) THEN 1.5
-            -- Short name starts with
-            WHEN lower(r.route_short_name) LIKE lower(query_text) || '%' THEN 1.2
-            -- Long name contains
-            WHEN lower(r.route_long_name) LIKE '%' || lower(query_text) || '%' THEN 0.8
-            -- Text search match
-            ELSE ts_rank(to_tsvector('english', coalesce(r.route_short_name, '') || ' ' || coalesce(r.route_long_name, '')), 
-                        plainto_tsquery('english', query_text))
-            END
-        )::REAL as relevance_score
-    FROM routes r
-    JOIN transport_sources ts ON r.source_id = ts.source_id
-    JOIN target_version tv ON r.version_id = tv.vid
-    WHERE 
-        -- Short name match OR long name match OR full text search
-        (lower(r.route_short_name) LIKE '%' || lower(query_text) || '%'
-         OR lower(r.route_long_name) LIKE '%' || lower(query_text) || '%'
-         OR to_tsvector('english', coalesce(r.route_short_name, '') || ' ' || coalesce(r.route_long_name, '')) 
-            @@ plainto_tsquery('english', query_text))
-    ORDER BY relevance_score DESC, r.route_short_name, r.route_long_name
     LIMIT max_results;
 END;
 $$ LANGUAGE plpgsql;
@@ -183,6 +128,8 @@ BEGIN
     JOIN transport_sources ts ON s.source_id = ts.source_id
     JOIN target_version tv ON s.version_id = tv.vid
     WHERE 
+    	s.location_type = 0
+		AND
         s.stop_lat IS NOT NULL 
         AND s.stop_lon IS NOT NULL
         AND earth_box(ll_to_earth(lat, lon), radius_meters) @> ll_to_earth(s.stop_lat, s.stop_lon)
