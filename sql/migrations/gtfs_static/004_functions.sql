@@ -82,7 +82,8 @@ BEGIN
     JOIN transport_sources ts ON s.source_id = ts.source_id
     JOIN target_version tv ON s.version_id = tv.vid
     WHERE 
-		s.location_type = 0
+		-- Special case where Metro Trains stations needs their parent to be null
+        (CASE WHEN s.source_id = 2 THEN s.parent_station IS NULL ELSE TRUE END)
 		AND
         -- Full text search OR trigram similarity
         (to_tsvector('english', s.stop_name) @@ plainto_tsquery('english', query_text)
@@ -128,7 +129,8 @@ BEGIN
     JOIN transport_sources ts ON s.source_id = ts.source_id
     JOIN target_version tv ON s.version_id = tv.vid
     WHERE 
-    	s.location_type = 0
+		-- Special case where Metro Trains stations needs their parent to be null
+        (CASE WHEN s.source_id = 2 THEN s.parent_station IS NULL ELSE TRUE END)
 		AND
         s.stop_lat IS NOT NULL 
         AND s.stop_lon IS NOT NULL
