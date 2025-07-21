@@ -218,10 +218,10 @@ func (m *Maintenance) CleanupRealtimeDataBySourceAndType(ctx context.Context, so
 	case StopTimeUpdates:
 		// Count first
 		err := m.db.DB().QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM gtfs_rt.stop_time_updates 
-			WHERE trip_update_id IN (
-				SELECT trip_update_id FROM gtfs_rt.trip_updates WHERE source_id = $1
-			)`, sourceID).Scan(&recordsDeleted)
+			SELECT COUNT(*) FROM gtfs_rt.stop_time_updates stu
+			JOIN gtfs_rt.trip_updates tu ON stu.trip_update_id = tu.trip_update_id
+			JOIN gtfs_rt.feed_messages fm ON tu.feed_message_id = fm.feed_message_id
+			WHERE fm.source_id = $1`, sourceID).Scan(&recordsDeleted)
 		if err != nil {
 			result.Error = fmt.Sprintf("counting stop time updates: %v", err)
 			return result
@@ -231,7 +231,9 @@ func (m *Maintenance) CleanupRealtimeDataBySourceAndType(ctx context.Context, so
 		_, err = m.db.DB().ExecContext(ctx, `
 			DELETE FROM gtfs_rt.stop_time_updates 
 			WHERE trip_update_id IN (
-				SELECT trip_update_id FROM gtfs_rt.trip_updates WHERE source_id = $1
+				SELECT tu.trip_update_id FROM gtfs_rt.trip_updates tu
+				JOIN gtfs_rt.feed_messages fm ON tu.feed_message_id = fm.feed_message_id
+				WHERE fm.source_id = $1
 			)`, sourceID)
 		if err != nil {
 			result.Error = fmt.Sprintf("deleting stop time updates: %v", err)
@@ -241,7 +243,9 @@ func (m *Maintenance) CleanupRealtimeDataBySourceAndType(ctx context.Context, so
 	case TripUpdates:
 		// Count first
 		err := m.db.DB().QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM gtfs_rt.trip_updates WHERE source_id = $1`, sourceID).Scan(&recordsDeleted)
+			SELECT COUNT(*) FROM gtfs_rt.trip_updates tu
+			JOIN gtfs_rt.feed_messages fm ON tu.feed_message_id = fm.feed_message_id
+			WHERE fm.source_id = $1`, sourceID).Scan(&recordsDeleted)
 		if err != nil {
 			result.Error = fmt.Sprintf("counting trip updates: %v", err)
 			return result
@@ -249,7 +253,10 @@ func (m *Maintenance) CleanupRealtimeDataBySourceAndType(ctx context.Context, so
 
 		// Delete trip updates
 		_, err = m.db.DB().ExecContext(ctx, `
-			DELETE FROM gtfs_rt.trip_updates WHERE source_id = $1`, sourceID)
+			DELETE FROM gtfs_rt.trip_updates 
+			WHERE feed_message_id IN (
+				SELECT feed_message_id FROM gtfs_rt.feed_messages WHERE source_id = $1
+			)`, sourceID)
 		if err != nil {
 			result.Error = fmt.Sprintf("deleting trip updates: %v", err)
 			return result
@@ -258,7 +265,9 @@ func (m *Maintenance) CleanupRealtimeDataBySourceAndType(ctx context.Context, so
 	case Alerts:
 		// Count first
 		err := m.db.DB().QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM gtfs_rt.alerts WHERE source_id = $1`, sourceID).Scan(&recordsDeleted)
+			SELECT COUNT(*) FROM gtfs_rt.alerts a
+			JOIN gtfs_rt.feed_messages fm ON a.feed_message_id = fm.feed_message_id
+			WHERE fm.source_id = $1`, sourceID).Scan(&recordsDeleted)
 		if err != nil {
 			result.Error = fmt.Sprintf("counting alerts: %v", err)
 			return result
@@ -266,7 +275,10 @@ func (m *Maintenance) CleanupRealtimeDataBySourceAndType(ctx context.Context, so
 
 		// Delete alerts
 		_, err = m.db.DB().ExecContext(ctx, `
-			DELETE FROM gtfs_rt.alerts WHERE source_id = $1`, sourceID)
+			DELETE FROM gtfs_rt.alerts 
+			WHERE feed_message_id IN (
+				SELECT feed_message_id FROM gtfs_rt.feed_messages WHERE source_id = $1
+			)`, sourceID)
 		if err != nil {
 			result.Error = fmt.Sprintf("deleting alerts: %v", err)
 			return result
