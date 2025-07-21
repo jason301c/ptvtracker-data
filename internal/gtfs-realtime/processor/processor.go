@@ -260,7 +260,7 @@ func (p *Processor) insertFeedMessage(tx *sql.Tx, header *gtfs_proto.FeedHeader,
 
 // processVehiclePositionsBulk uses PostgreSQL COPY for high-performance bulk inserts
 func (p *Processor) processVehiclePositionsBulk(tx *sql.Tx, feedMessageID int, entities []*gtfs_proto.FeedEntity) error {
-	// Prepare COPY statement
+	// Prepare COPY statement with fully qualified table name
 	stmt, err := tx.Prepare(pq.CopyIn("gtfs_rt.vehicle_positions",
 		"feed_message_id", "entity_id", "is_deleted", "trip_id", "route_id",
 		"start_time", "start_date", "schedule_relationship", "vehicle_id",
