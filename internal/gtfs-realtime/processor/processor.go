@@ -141,11 +141,38 @@ func (p *Processor) processFeedMessage(result *consumer.FeedResult) error {
 	// Start timing the transaction
 	startTime := time.Now()
 
+	p.logger.Debug("Starting transaction for feed processing", 
+		"endpoint", result.Endpoint.Name, 
+		"feedType", result.Endpoint.FeedType)
+
 	tx, err := p.dbWrapper.BeginTx(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Test database connection and schema visibility
+	var schemaTest string
+	if err := tx.QueryRow("SELECT current_database()").Scan(&schemaTest); err != nil {
+		p.logger.Error("Failed to query current database", "error", err)
+	} else {
+		p.logger.Debug("Database connection confirmed", "database", schemaTest)
+	}
+
+	var searchPath string
+	if err := tx.QueryRow("SHOW search_path").Scan(&searchPath); err != nil {
+		p.logger.Error("Failed to query search_path", "error", err)
+	} else {
+		p.logger.Debug("Current search_path", "searchPath", searchPath)
+	}
+
+	// Check if gtfs_rt.vehicle_positions table exists
+	var tableExists bool
+	if err := tx.QueryRow("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'gtfs_rt' AND table_name = 'vehicle_positions')").Scan(&tableExists); err != nil {
+		p.logger.Error("Failed to check table existence", "error", err)
+	} else {
+		p.logger.Debug("Table existence check", "table", "gtfs_rt.vehicle_positions", "exists", tableExists)
+	}
 
 	feedMessageID, err := p.insertFeedMessage(tx, result.Message.Header, sourceID, versionID, result.Endpoint.FeedType)
 	if err != nil {
@@ -260,13 +287,29 @@ func (p *Processor) insertFeedMessage(tx *sql.Tx, header *gtfs_proto.FeedHeader,
 
 // processVehiclePositionsBulk uses PostgreSQL COPY for high-performance bulk inserts
 func (p *Processor) processVehiclePositionsBulk(tx *sql.Tx, feedMessageID int, entities []*gtfs_proto.FeedEntity) error {
-	// Prepare COPY statement with fully qualified table name
-	stmt, err := tx.Prepare(pq.CopyIn("gtfs_rt.vehicle_positions",
+	p.logger.Debug("Preparing COPY statement for vehicle_positions", 
+		"tableName", "gtfs_rt.vehicle_positions",
+		"entityCount", len(entities))
+
+	// Double-check table exists before CopyIn
+	var tableExists bool
+	if err := tx.QueryRow("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'gtfs_rt' AND table_name = 'vehicle_positions')").Scan(&tableExists); err != nil {
+		p.logger.Error("Failed to verify table existence before CopyIn", "error", err)
+	} else {
+		p.logger.Debug("Pre-CopyIn table check", "exists", tableExists)
+	}
+
+	// Try COPY statement without schema qualification, relying on search_path
+	// Some versions of pq.CopyIn have issues with schema-qualified names
+	stmt, err := tx.Prepare(pq.CopyIn("vehicle_positions",
 		"feed_message_id", "entity_id", "is_deleted", "trip_id", "route_id",
 		"start_time", "start_date", "schedule_relationship", "vehicle_id",
 		"vehicle_label", "license_plate", "latitude", "longitude", "bearing",
 		"current_status", "stop_id", "timestamp"))
 	if err != nil {
+		p.logger.Error("CopyIn preparation failed", 
+			"error", err,
+			"tableName", "gtfs_rt.vehicle_positions")
 		return fmt.Errorf("failed to prepare vehicle positions copy: %w", err)
 	}
 	defer stmt.Close()
@@ -359,7 +402,7 @@ func (p *Processor) processTripUpdatesBulk(tx *sql.Tx, feedMessageID int, entiti
 	affectedStopsMap := make(map[string]bool)
 
 	// First, bulk insert trip updates
-	tripStmt, err := tx.Prepare(pq.CopyIn("gtfs_rt.trip_updates",
+	tripStmt, err := tx.Prepare(pq.CopyIn("trip_updates",
 		"feed_message_id", "entity_id", "is_deleted", "trip_id", "route_id",
 		"direction_id", "start_time", "start_date", "schedule_relationship",
 		"vehicle_id", "vehicle_label", "timestamp", "delay"))
@@ -457,7 +500,7 @@ func (p *Processor) processTripUpdatesBulk(tx *sql.Tx, feedMessageID int, entiti
 	}
 
 	// Now bulk insert stop time updates
-	stopStmt, err := tx.Prepare(pq.CopyIn("gtfs_rt.stop_time_updates",
+	stopStmt, err := tx.Prepare(pq.CopyIn("stop_time_updates",
 		"trip_update_id", "stop_sequence", "stop_id", "arrival_delay",
 		"arrival_time", "arrival_uncertainty", "departure_delay",
 		"departure_time", "departure_uncertainty", "schedule_relationship"))
@@ -544,7 +587,7 @@ func (p *Processor) processTripUpdatesBulk(tx *sql.Tx, feedMessageID int, entiti
 // processServiceAlertsBulk uses PostgreSQL COPY for high-performance bulk inserts
 func (p *Processor) processServiceAlertsBulk(tx *sql.Tx, feedMessageID int, entities []*gtfs_proto.FeedEntity) error {
 	// First pass: insert alerts and collect their IDs
-	alertStmt, err := tx.Prepare(pq.CopyIn("gtfs_rt.alerts",
+	alertStmt, err := tx.Prepare(pq.CopyIn("alerts",
 		"feed_message_id", "entity_id", "is_deleted", "cause", "effect", "severity"))
 	if err != nil {
 		return fmt.Errorf("failed to prepare alerts copy: %w", err)
