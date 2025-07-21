@@ -150,12 +150,11 @@ func (p *Processor) processFeedMessage(result *consumer.FeedResult) error {
 		return fmt.Errorf("failed to insert feed message: %w", err)
 	}
 
-	var affectedStops []string
 	switch result.Endpoint.FeedType {
 	case "vehicle_positions":
 		err = p.processVehiclePositionsBulk(tx, feedMessageID, result.Message.Entity)
 	case "trip_updates":
-		affectedStops, err = p.processTripUpdatesBulk(tx, feedMessageID, result.Message.Entity)
+		_, err = p.processTripUpdatesBulk(tx, feedMessageID, result.Message.Entity)
 	case "service_alerts":
 		err = p.processServiceAlertsBulk(tx, feedMessageID, result.Message.Entity)
 	default:
