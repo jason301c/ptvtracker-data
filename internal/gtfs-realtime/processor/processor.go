@@ -173,7 +173,7 @@ func (p *Processor) processFeedMessage(result *consumer.FeedResult) error {
 	// Send batch update notification after successful commit
 	entityCount := len(result.Message.Entity)
 	if entityCount > 0 {
-		if err := p.sendBatchNotification(result.Endpoint.FeedType, result.Endpoint.Source, versionID, entityCount); err != nil {
+		if err := p.sendBatchNotification(result.Endpoint.FeedType, sourceID, versionID, entityCount); err != nil {
 			// Log error but don't fail the processing
 			p.logger.Error("Failed to send batch notification",
 				"endpoint", result.Endpoint.Name,
@@ -534,7 +534,7 @@ func (p *Processor) processTripUpdates(tx *sql.Tx, feedMessageID int, entities [
 }
 
 // sendBatchNotification calls the PostgreSQL function to send NOTIFY messages for batch updates
-func (p *Processor) sendBatchNotification(feedType, source string, versionID, recordCount int) error {
+func (p *Processor) sendBatchNotification(feedType string, sourceID, versionID, recordCount int) error {
 	// Map feed type to table name
 	tableName := ""
 	switch feedType {
@@ -550,7 +550,7 @@ func (p *Processor) sendBatchNotification(feedType, source string, versionID, re
 
 	// Call the PostgreSQL function to send NOTIFY
 	_, err := p.db.Exec(`SELECT gtfs_rt.notify_batch_update($1, $2, $3, $4)`,
-		tableName, source, versionID, recordCount)
+		tableName, sourceID, versionID, recordCount)
 	
 	if err != nil {
 		return fmt.Errorf("failed to send batch notification: %w", err)
@@ -558,7 +558,7 @@ func (p *Processor) sendBatchNotification(feedType, source string, versionID, re
 
 	p.logger.Debug("Sent batch notification",
 		"table", tableName,
-		"source", source,
+		"source_id", sourceID,
 		"version_id", versionID,
 		"record_count", recordCount)
 
