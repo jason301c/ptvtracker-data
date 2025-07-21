@@ -72,7 +72,7 @@ func NewConsumer(cfg config.GTFSRealtimeConfig, log logger.Logger) *Consumer {
 		logger:      log,
 		rateLimiter: newRateLimiter(cfg.RateLimitPerMin),
 		cache:       newFeedCache(),
-		feedChan:    make(chan *FeedResult, 100),
+		feedChan:    make(chan *FeedResult, 1000), // Increased buffer to handle high volume of Melbourne PT data
 		stopChan:    make(chan struct{}),
 	}
 }
