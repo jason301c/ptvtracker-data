@@ -104,7 +104,7 @@ func main() {
 	// Start GTFS-Realtime manager (if API key is provided)
 	if cfg.GTFSRealtime.APIKey != "" {
 		log.Info("Starting GTFS-Realtime manager", "endpoints", len(cfg.GTFSRealtime.Endpoints))
-		rtManager := gtfs_realtime.NewManager(cfg.GTFSRealtime, database.DB(), log)
+		rtManager := gtfs_realtime.NewManager(cfg.GTFSRealtime, database, log)
 		wg.Add(1)
 		go func(m *gtfs_realtime.Manager) {
 			defer wg.Done()

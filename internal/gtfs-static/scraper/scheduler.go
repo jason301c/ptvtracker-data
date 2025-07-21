@@ -14,6 +14,7 @@ import (
 
 	"github.com/ptvtracker-data/internal/common/db"
 	"github.com/ptvtracker-data/internal/common/logger"
+	"github.com/ptvtracker-data/internal/common/maintenance"
 	"github.com/ptvtracker-data/internal/gtfs-static/importer"
 )
 
@@ -24,6 +25,7 @@ type GTFSScheduler struct {
 	downloader      Downloader
 	database        *db.DB
 	logger          logger.Logger
+	maintenance     *maintenance.Maintenance
 
 	mu      sync.Mutex
 	cancel  context.CancelFunc
@@ -51,6 +53,7 @@ func NewScheduler(
 		downloader:      downloader,
 		database:        database,
 		logger:          logger,
+		maintenance:     maintenance.New(database, logger),
 	}
 }
 
@@ -237,6 +240,14 @@ func (s *GTFSScheduler) checkAndUpdate(ctx context.Context) error {
 	s.logger.Info("Successfully imported and activated new GTFS data",
 		"version_id", versionID,
 		"version_name", versionName)
+
+	// Perform post-import maintenance (refresh views, cleanup old versions)
+	if err := s.maintenance.PerformPostImportMaintenance(ctx); err != nil {
+		// Log error but don't fail the import - maintenance is not critical
+		s.logger.Error("Post-import maintenance failed",
+			"version_id", versionID,
+			"error", err)
+	}
 
 	return nil
 }

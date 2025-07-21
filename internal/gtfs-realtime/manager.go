@@ -2,11 +2,11 @@ package gtfs_realtime
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"sync"
 
 	"github.com/ptvtracker-data/internal/common/config"
+	"github.com/ptvtracker-data/internal/common/db"
 	"github.com/ptvtracker-data/internal/common/logger"
 	"github.com/ptvtracker-data/internal/gtfs-realtime/consumer"
 	"github.com/ptvtracker-data/internal/gtfs-realtime/processor"
@@ -17,19 +17,19 @@ type Manager struct {
 	logger    logger.Logger
 	consumer  *consumer.Consumer
 	processor *processor.Processor
-	db        *sql.DB
+	db        *db.DB
 	mu        sync.RWMutex
 	isRunning bool
 	cancelFn  context.CancelFunc
 }
 
-func NewManager(cfg config.GTFSRealtimeConfig, db *sql.DB, log logger.Logger) *Manager {
+func NewManager(cfg config.GTFSRealtimeConfig, database *db.DB, log logger.Logger) *Manager {
 	return &Manager{
 		config:    cfg,
 		logger:    log,
-		db:        db,
+		db:        database,
 		consumer:  consumer.NewConsumer(cfg, log),
-		processor: processor.NewProcessor(db, log),
+		processor: processor.NewProcessor(database, log),
 	}
 }
 

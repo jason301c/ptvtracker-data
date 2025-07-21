@@ -8,14 +8,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ptvtracker-data/internal/common/db"
 	"github.com/ptvtracker-data/internal/common/logger"
+	"github.com/ptvtracker-data/internal/common/maintenance"
 	"github.com/ptvtracker-data/internal/gtfs-realtime/consumer"
 	gtfs_proto "github.com/ptvtracker-data/pkg/gtfs-realtime/proto"
 )
 
 type Processor struct {
 	db             *sql.DB
+	dbWrapper      *db.DB
 	logger         logger.Logger
+	maintenance    *maintenance.Maintenance
 	sourceMapping  map[string]int // maps source name to source_id
 	versionMapping map[string]int // maps version info to version_id
 }
@@ -31,10 +35,12 @@ type ProcessorStats struct {
 	LastProcessedTime time.Time
 }
 
-func NewProcessor(db *sql.DB, log logger.Logger) *Processor {
+func NewProcessor(dbWrapper *db.DB, log logger.Logger) *Processor {
 	return &Processor{
-		db:             db,
+		db:             dbWrapper.DB(),
+		dbWrapper:      dbWrapper,
 		logger:         log,
+		maintenance:    maintenance.New(dbWrapper, log),
 		sourceMapping:  make(map[string]int),
 		versionMapping: make(map[string]int),
 	}
@@ -138,6 +144,10 @@ func (p *Processor) processFeedMessage(result *consumer.FeedResult) error {
 	if err != nil {
 		return fmt.Errorf("failed to insert feed message: %w", err)
 	}
+
+	// Clean up old data of the same type for this source before processing new data
+	// This ensures fresh data and prevents accumulation
+	p.cleanupOldRealtimeDataByType(context.Background(), sourceID, result.Endpoint.FeedType)
 
 	// Process entities based on feed type
 	switch result.Endpoint.FeedType {
@@ -757,4 +767,46 @@ func (p *Processor) processServiceAlerts(tx *sql.Tx, feedMessageID int, entities
 	}
 
 	return nil
+}
+
+// cleanupOldRealtimeDataByType removes existing realtime data for a specific source and feed type
+// This is called before processing new data to ensure fresh data and prevent accumulation
+func (p *Processor) cleanupOldRealtimeDataByType(ctx context.Context, sourceID int, feedType string) {
+	// Map feed type to maintenance data type
+	var dataType maintenance.RealtimeDataType
+	switch feedType {
+	case "vehicle_positions":
+		dataType = maintenance.VehiclePositions
+	case "trip_updates":
+		// For trip updates, we need to clean both trip updates and their associated stop time updates
+		p.cleanupDataType(ctx, sourceID, maintenance.StopTimeUpdates)
+		dataType = maintenance.TripUpdates
+	case "service_alerts":
+		dataType = maintenance.Alerts
+	default:
+		p.logger.Warn("Unknown feed type for cleanup", "feed_type", feedType, "source_id", sourceID)
+		return
+	}
+
+	p.cleanupDataType(ctx, sourceID, dataType)
+}
+
+// cleanupDataType performs the actual cleanup for a specific data type
+func (p *Processor) cleanupDataType(ctx context.Context, sourceID int, dataType maintenance.RealtimeDataType) {
+	result := p.maintenance.CleanupRealtimeDataBySourceAndType(ctx, sourceID, dataType)
+	
+	if result.Success {
+		if result.RecordsDeleted > 0 {
+			p.logger.Info("Cleaned up old realtime data before processing new data",
+				"source_id", sourceID,
+				"data_type", dataType,
+				"records_deleted", result.RecordsDeleted)
+		}
+	} else {
+		// Log warning but don't fail processing - cleanup is best effort
+		p.logger.Warn("Failed to cleanup old realtime data, continuing with processing",
+			"source_id", sourceID,
+			"data_type", dataType,
+			"error", result.Error)
+	}
 }
