@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	dataVicAPIBase = "https://discover.data.vic.gov.au/api/3/action/resource_show"
+	dataVicAPIBase = "https://opendata.transport.vic.gov.au/api/3/action/resource_show"
 	httpTimeout    = 30 * time.Second
 )
 
