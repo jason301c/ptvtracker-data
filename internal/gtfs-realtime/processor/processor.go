@@ -178,11 +178,9 @@ func (p *Processor) processFeedMessage(result *consumer.FeedResult) error {
 		"feed_message_id", feedMessageID,
 		"duration_ms", duration.Milliseconds())
 
-	// Send notifications for affected stops
-	if len(affectedStops) > 0 && result.Endpoint.FeedType == "trip_updates" {
-		p.sendStopNotifications(sourceID, affectedStops)
-	}
-
+	// All notifications are handled by database triggers
+	// No manual notification sending needed from the Go backend
+	
 	return nil
 }
 
@@ -718,26 +716,8 @@ func (p *Processor) processServiceAlertsBulk(tx *sql.Tx, feedMessageID int, enti
 	return nil
 }
 
-// sendStopNotifications sends NOTIFY messages for each affected stop
-func (p *Processor) sendStopNotifications(sourceID int, affectedStops []string) {
-	// Batch notifications by stop to avoid overwhelming the system
-	for _, stopID := range affectedStops {
-		channel := fmt.Sprintf("stop_departures:%d:%s", sourceID, stopID)
-		payload := fmt.Sprintf(`{"type":"update","source_id":%d,"stop_id":"%s"}`, sourceID, stopID)
-		
-		_, err := p.db.Exec(`SELECT pg_notify($1, $2)`, channel, payload)
-		if err != nil {
-			p.logger.Error("Failed to send stop notification",
-				"stop_id", stopID,
-				"source_id", sourceID,
-				"error", err)
-		}
-	}
-
-	p.logger.Debug("Sent stop notifications",
-		"source_id", sourceID,
-		"stop_count", len(affectedStops))
-}
+// Notification handling has been moved to database triggers
+// The sendStopNotifications function is no longer needed
 
 // parseGTFSTime converts GTFS time string (HH:MM:SS) to seconds since midnight
 // Supports times > 24:00:00 for trips continuing past midnight
