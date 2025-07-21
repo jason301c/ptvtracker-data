@@ -141,7 +141,7 @@ func (p *Processor) processFeedMessage(result *consumer.FeedResult) error {
 	// Start timing the transaction
 	startTime := time.Now()
 
-	tx, err := p.db.Begin()
+	tx, err := p.dbWrapper.BeginTx(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}

@@ -43,7 +43,18 @@ func (db *DB) Close() error {
 }
 
 func (db *DB) BeginTx(ctx context.Context) (*sql.Tx, error) {
-	return db.conn.BeginTx(ctx, nil)
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Set search_path for this transaction to ensure it has access to all schemas
+	if _, err := tx.Exec("SET search_path TO gtfs_rt, gtfs, public"); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("setting search path for transaction: %w", err)
+	}
+	
+	return tx, nil
 }
 
 // Logger returns the logger instance
