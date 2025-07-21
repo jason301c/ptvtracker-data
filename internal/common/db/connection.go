@@ -24,8 +24,8 @@ func New(connStr string, logger logger.Logger) (*DB, error) {
 		return nil, fmt.Errorf("pinging database: %w", err)
 	}
 
-	// Set search_path to include gtfs schema for earthdistance extension
-	if _, err := conn.Exec("SET search_path TO gtfs, public"); err != nil {
+	// Set search_path to include gtfs and gtfs_rt schemas
+	if _, err := conn.Exec("SET search_path TO gtfs_rt, gtfs, public"); err != nil {
 		return nil, fmt.Errorf("setting search path: %w", err)
 	}
 
@@ -48,7 +48,7 @@ func (db *DB) BeginTx(ctx context.Context) (*sql.Tx, error) {
 	}
 	
 	// Set search_path for this transaction
-	if _, err := tx.Exec("SET search_path TO gtfs, public"); err != nil {
+	if _, err := tx.Exec("SET search_path TO gtfs_rt, gtfs, public"); err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("setting search path for transaction: %w", err)
 	}

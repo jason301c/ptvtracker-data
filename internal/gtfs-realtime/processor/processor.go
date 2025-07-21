@@ -55,6 +55,9 @@ func (p *Processor) Start(ctx context.Context, feedChan <-chan *consumer.FeedRes
 		return fmt.Errorf("failed to initialize source mappings: %w", err)
 	}
 
+	// Start cleanup goroutine for old realtime data
+	go p.runCleanupJob(ctx)
+
 	// Process incoming feeds
 	go p.processFeedResults(ctx, feedChan)
 
@@ -132,9 +135,8 @@ func (p *Processor) processFeedMessage(result *consumer.FeedResult) error {
 		return fmt.Errorf("failed to get version: %w", err)
 	}
 
-	// CRITICAL FIX: Cleanup old data BEFORE starting the transaction
-	// This ensures we don't hold locks and allows NOTIFY to fire immediately
-	p.cleanupOldRealtimeDataByType(context.Background(), sourceID, result.Endpoint.FeedType)
+	// Note: Realtime data cleanup is now handled by a separate cleanup goroutine
+	// This ensures consistent retention across all feed types
 
 	// Start timing the transaction
 	startTime := time.Now()
@@ -749,44 +751,55 @@ func parseGTFSTime(timeStr string) (*int32, error) {
 	return &totalSeconds, nil
 }
 
-// cleanupOldRealtimeDataByType removes existing realtime data for a specific source and feed type
-// This is called before processing new data to ensure fresh data and prevent accumulation
-func (p *Processor) cleanupOldRealtimeDataByType(ctx context.Context, sourceID int, feedType string) {
-	// Map feed type to maintenance data type
-	var dataType maintenance.RealtimeDataType
-	switch feedType {
-	case "vehicle_positions":
-		dataType = maintenance.VehiclePositions
-	case "trip_updates":
-		// For trip updates, we need to clean both trip updates and their associated stop time updates
-		p.cleanupDataType(ctx, sourceID, maintenance.StopTimeUpdates)
-		dataType = maintenance.TripUpdates
-	case "service_alerts":
-		dataType = maintenance.Alerts
-	default:
-		p.logger.Warn("Unknown feed type for cleanup", "feed_type", feedType, "source_id", sourceID)
+// runCleanupJob runs a periodic cleanup to remove old realtime data
+// This maintains a 15-minute retention window for all realtime data
+func (p *Processor) runCleanupJob(ctx context.Context) {
+	// Run cleanup every 5 minutes
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	p.logger.Info("Starting realtime data cleanup job", "retention_minutes", 15, "cleanup_interval_minutes", 5)
+
+	// Run initial cleanup
+	p.performCleanup(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			p.logger.Info("Cleanup job stopped")
+			return
+		case <-ticker.C:
+			p.performCleanup(ctx)
+		}
+	}
+}
+
+// performCleanup removes all realtime data older than 15 minutes
+// Uses CASCADE to automatically clean child tables
+func (p *Processor) performCleanup(ctx context.Context) {
+	startTime := time.Now()
+	
+	// Single query to clean all old data - CASCADE handles relationships
+	result, err := p.db.ExecContext(ctx, `
+		DELETE FROM gtfs_rt.feed_messages 
+		WHERE received_at < NOW() - INTERVAL '15 minutes'
+	`)
+	
+	if err != nil {
+		p.logger.Error("Failed to cleanup old realtime data", "error", err)
 		return
 	}
 
-	p.cleanupDataType(ctx, sourceID, dataType)
-}
+	rowsDeleted, _ := result.RowsAffected()
+	duration := time.Since(startTime)
 
-// cleanupDataType performs the actual cleanup for a specific data type
-func (p *Processor) cleanupDataType(ctx context.Context, sourceID int, dataType maintenance.RealtimeDataType) {
-	result := p.maintenance.CleanupRealtimeDataBySourceAndType(ctx, sourceID, dataType)
-	
-	if result.Success {
-		if result.RecordsDeleted > 0 {
-			p.logger.Info("Cleaned up old realtime data before processing new data",
-				"source_id", sourceID,
-				"data_type", dataType,
-				"records_deleted", result.RecordsDeleted)
-		}
+	if rowsDeleted > 0 {
+		p.logger.Info("Cleaned up old realtime data",
+			"feed_messages_deleted", rowsDeleted,
+			"duration_ms", duration.Milliseconds(),
+			"retention_minutes", 15)
 	} else {
-		// Log warning but don't fail processing - cleanup is best effort
-		p.logger.Warn("Failed to cleanup old realtime data, continuing with processing",
-			"source_id", sourceID,
-			"data_type", dataType,
-			"error", result.Error)
+		p.logger.Debug("No old realtime data to cleanup",
+			"duration_ms", duration.Milliseconds())
 	}
 }
