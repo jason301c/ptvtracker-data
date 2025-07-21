@@ -83,11 +83,10 @@ func (vc *VersionChecker) CreateNewVersion(ctx context.Context, versionName stri
 	}
 	defer tx.Rollback()
 
-	// First, deactivate all existing versions
-	_, err = tx.ExecContext(ctx, "UPDATE gtfs.versions SET is_active = false WHERE is_active = true")
-	if err != nil {
-		return 0, fmt.Errorf("deactivating versions: %w", err)
-	}
+	// Note: For true blue-green deployment, we do NOT deactivate existing versions here.
+	// The old version remains active during the entire import process (which can take ~1 hour).
+	// Version switching happens atomically in ActivateVersion() only after import succeeds.
+	// This ensures zero downtime and prevents GTFS-realtime processor from failing.
 
 	// Create new version
 	var versionID int
