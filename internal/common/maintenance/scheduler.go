@@ -132,7 +132,7 @@ func (s *CleanupScheduler) realtimeCleanupLoop(ctx context.Context) {
 	defer ticker.Stop()
 
 	// Run initial cleanup after a short delay
-	initialDelay := time.NewTimer(5 * time.Minute)
+	initialDelay := time.NewTimer(1 * time.Minute)
 	defer initialDelay.Stop()
 
 	for {
@@ -155,8 +155,8 @@ func (s *CleanupScheduler) staticCleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(s.staticInterval)
 	defer ticker.Stop()
 
-	// Run initial cleanup after 10 minutes (after potential startup import)
-	initialDelay := time.NewTimer(10 * time.Minute)
+	// Run initial cleanup after 5 minutes (after potential startup import)
+	initialDelay := time.NewTimer(5 * time.Minute)
 	defer initialDelay.Stop()
 
 	for {
