@@ -797,24 +797,14 @@ func parseGTFSTime(timeStr string) (*int32, error) {
 // runCleanupJob runs a periodic cleanup to remove old realtime data
 // This maintains a 15-minute retention window for all realtime data
 func (p *Processor) runCleanupJob(ctx context.Context) {
-	// Run cleanup every 5 minutes
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-
-	p.logger.Info("Starting realtime data cleanup job", "retention_minutes", 15, "cleanup_interval_minutes", 5)
-
-	// Run initial cleanup
-	p.performCleanup(ctx)
-
-	for {
-		select {
-		case <-ctx.Done():
-			p.logger.Info("Cleanup job stopped")
-			return
-		case <-ticker.C:
-			p.performCleanup(ctx)
-		}
-	}
+	// DISABLED: Old cleanup system - replaced by maintenance.CleanupScheduler
+	// This was deleting data after only 15 minutes, conflicting with the new 1-day retention policy
+	p.logger.Info("Realtime cleanup job disabled - using maintenance.CleanupScheduler instead")
+	
+	// Keep the goroutine alive but do nothing
+	<-ctx.Done()
+	p.logger.Info("Cleanup job stopped")
+	return
 }
 
 // performCleanup removes all realtime data older than 15 minutes
