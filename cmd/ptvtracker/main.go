@@ -11,6 +11,7 @@ import (
 	"github.com/ptvtracker-data/internal/common/config"
 	"github.com/ptvtracker-data/internal/common/db"
 	"github.com/ptvtracker-data/internal/common/logger"
+	"github.com/ptvtracker-data/internal/common/maintenance"
 	"github.com/ptvtracker-data/internal/gtfs-static/scraper"
 	gtfs_realtime "github.com/ptvtracker-data/internal/gtfs-realtime"
 )
@@ -82,6 +83,18 @@ func main() {
 
 	var wg sync.WaitGroup
 
+	// Start cleanup scheduler
+	log.Info("Starting cleanup scheduler")
+	cleanupConfig := maintenance.DefaultSchedulerConfig()
+	cleanupScheduler := maintenance.NewCleanupScheduler(database, log, cleanupConfig)
+	wg.Add(1)
+	go func(cs *maintenance.CleanupScheduler) {
+		defer wg.Done()
+		if err := cs.Start(ctx); err != nil {
+			log.Error("Cleanup scheduler error", "error", err)
+		}
+	}(cleanupScheduler)
+
 	// Start GTFS-Static scheduler (single source)
 	log.Info("Starting GTFS-Static scheduler", "url", cfg.GTFSStatic.URL)
 	schedulerCfg := scraper.Config{
@@ -92,7 +105,7 @@ func main() {
 	// Create dependencies for scheduler
 	metadataFetcher := scraper.NewHTTPMetadataFetcher(log)
 	downloader := scraper.NewHTTPDownloader(log)
-	scheduler := scraper.NewScheduler(schedulerCfg, database, log, metadataFetcher, downloader)
+	scheduler := scraper.NewScheduler(schedulerCfg, database, log, metadataFetcher, downloader, cleanupScheduler)
 	wg.Add(1)
 	go func(s *scraper.GTFSScheduler) {
 		defer wg.Done()
@@ -119,6 +132,9 @@ func main() {
 	// Wait for shutdown signal
 	<-sigChan
 	log.Info("Shutdown signal received")
+
+	// Stop cleanup scheduler first
+	cleanupScheduler.Stop()
 
 	// Cancel context to stop all schedulers
 	cancel()

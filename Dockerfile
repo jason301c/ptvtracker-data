@@ -57,6 +57,11 @@ ENV LOG_LEVEL=info
 ENV LOG_FILE=/app/logs/ptvtracker.log
 ENV GTFS_STATIC_DOWNLOAD_DIR=/app/data
 
+# Set resource limits for the container
+# Memory limit: 2GB for the Go application
+# This prevents the real-time feeds from consuming excessive memory
+ENV GOMEMLIMIT=2GiB
+
 # Health check - checks if the process is running
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD pgrep -f ptvtracker || exit 1

@@ -26,6 +26,7 @@ type GTFSScheduler struct {
 	database        *db.DB
 	logger          logger.Logger
 	maintenance     *maintenance.Maintenance
+	cleanupScheduler *maintenance.CleanupScheduler
 
 	mu      sync.Mutex
 	cancel  context.CancelFunc
@@ -45,15 +46,17 @@ func NewScheduler(
 	logger logger.Logger,
 	metadataFetcher MetadataFetcher, // Use the interface
 	downloader Downloader, // Use the interface
+	cleanupScheduler *maintenance.CleanupScheduler, // Optional cleanup coordination
 ) *GTFSScheduler {
 	return &GTFSScheduler{
-		config:          config,
-		metadataFetcher: metadataFetcher,
-		versionChecker:  db.NewVersionChecker(database),
-		downloader:      downloader,
-		database:        database,
-		logger:          logger,
-		maintenance:     maintenance.New(database, logger),
+		config:           config,
+		metadataFetcher:  metadataFetcher,
+		versionChecker:   db.NewVersionChecker(database),
+		downloader:       downloader,
+		database:         database,
+		logger:           logger,
+		maintenance:      maintenance.New(database, logger),
+		cleanupScheduler: cleanupScheduler,
 	}
 }
 
@@ -217,6 +220,12 @@ func (s *GTFSScheduler) checkAndUpdate(ctx context.Context) error {
 		nestedZipFile.Close()
 		if err != nil {
 			return fmt.Errorf("extracting nested zip for source %d: %w", sourceID, err)
+		}
+
+		// Lock cleanup operations during import
+		if s.cleanupScheduler != nil {
+			s.cleanupScheduler.LockForImport()
+			defer s.cleanupScheduler.UnlockAfterImport()
 		}
 
 		// Import the data for this source
