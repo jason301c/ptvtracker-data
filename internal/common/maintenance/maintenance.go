@@ -101,40 +101,172 @@ func (m *Maintenance) CleanupOldGTFSVersions(ctx context.Context, keepInactiveVe
 	return results, nil
 }
 
-// CleanupOldRealtimeData removes real-time data older than specified days
-func (m *Maintenance) CleanupOldRealtimeData(ctx context.Context, retentionDays int) error {
-	m.logger.Info("Starting cleanup of old realtime data", "retention_days", retentionDays)
+// BatchedCleanupResult represents the result of a batched cleanup operation
+type BatchedCleanupResult struct {
+	TableName      string
+	BatchNumber    int
+	RecordsDeleted int64
+	SizeFreed      string
+	BatchDuration  *string // Using pointer to handle NULL values
+}
 
-	query := `SELECT * FROM gtfs_rt.cleanup_old_realtime_data($1)`
-	rows, err := m.db.DB().QueryContext(ctx, query, retentionDays)
+// CleanupOldRealtimeDataBatched removes real-time data older than specified days using batched processing
+func (m *Maintenance) CleanupOldRealtimeDataBatched(ctx context.Context, retentionDays int, batchSize int) error {
+	m.logger.Info("Starting batched cleanup of old realtime data", 
+		"retention_days", retentionDays,
+		"batch_size", batchSize)
+
+	query := `SELECT * FROM gtfs_rt.cleanup_old_realtime_data_batch($1, $2)`
+	rows, err := m.db.DB().QueryContext(ctx, query, retentionDays, batchSize)
 	if err != nil {
-		return fmt.Errorf("executing cleanup_old_realtime_data: %w", err)
+		return fmt.Errorf("executing cleanup_old_realtime_data_batch: %w", err)
 	}
 	defer rows.Close()
 
-	totalDeleted := int64(0)
+	tableStats := make(map[string]struct {
+		totalDeleted int64
+		batchCount   int
+		sizeFreed    string
+	})
+
 	for rows.Next() {
-		var tableName string
-		var recordsDeleted int64
-		var sizeFreed string
+		var result BatchedCleanupResult
 		
-		err := rows.Scan(&tableName, &recordsDeleted, &sizeFreed)
+		err := rows.Scan(&result.TableName, &result.BatchNumber, &result.RecordsDeleted, &result.SizeFreed, &result.BatchDuration)
 		if err != nil {
 			return fmt.Errorf("scanning cleanup result: %w", err)
 		}
 
-		m.logger.Info("Cleaned up realtime table",
-			"table", tableName,
-			"records_deleted", recordsDeleted,
-			"size_freed", sizeFreed)
-		totalDeleted += recordsDeleted
+		if result.BatchNumber == 0 {
+			// Summary record for this table
+			stats := tableStats[result.TableName]
+			stats.sizeFreed = result.SizeFreed
+			tableStats[result.TableName] = stats
+			
+			m.logger.Info("Completed cleanup for table",
+				"table", result.TableName,
+				"total_records_deleted", result.RecordsDeleted,
+				"total_batches", stats.batchCount,
+				"size_freed", result.SizeFreed)
+		} else {
+			// Individual batch record
+			stats := tableStats[result.TableName]
+			stats.totalDeleted += result.RecordsDeleted
+			stats.batchCount++
+			tableStats[result.TableName] = stats
+			
+			durationStr := "unknown"
+			if result.BatchDuration != nil {
+				durationStr = *result.BatchDuration
+			}
+			
+			m.logger.Debug("Processed batch",
+				"table", result.TableName,
+				"batch", result.BatchNumber,
+				"records_deleted", result.RecordsDeleted,
+				"duration", durationStr)
+		}
 	}
 
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterating cleanup results: %w", err)
 	}
 
-	m.logger.Info("Realtime cleanup completed", "total_records_deleted", totalDeleted)
+	// Calculate total across all tables
+	totalDeleted := int64(0)
+	totalBatches := 0
+	for _, stats := range tableStats {
+		totalDeleted += stats.totalDeleted
+		totalBatches += stats.batchCount
+	}
+
+	m.logger.Info("Batched realtime cleanup completed", 
+		"total_records_deleted", totalDeleted,
+		"total_batches", totalBatches,
+		"tables_processed", len(tableStats))
+	
+	// Run VACUUM ANALYZE separately (outside transaction)
+	if err := m.VacuumCleanupTables(ctx); err != nil {
+		m.logger.Warn("Failed to vacuum tables after cleanup", "error", err)
+		// Don't return error - cleanup was successful, vacuum is just optimization
+	}
+	
+	return nil
+}
+
+// CleanupOldRealtimeData removes real-time data older than specified days (backwards compatibility)
+// This now uses the batched approach internally
+func (m *Maintenance) CleanupOldRealtimeData(ctx context.Context, retentionDays int) error {
+	m.logger.Info("Starting cleanup of old realtime data (legacy method)", "retention_days", retentionDays)
+	
+	// Use batched cleanup with a reasonable batch size
+	return m.CleanupOldRealtimeDataBatched(ctx, retentionDays, 5000)
+}
+
+// VacuumResult represents the result of a vacuum operation
+type VacuumResult struct {
+	TableName string
+	Operation string
+	Duration  *string // Using pointer to handle NULL values
+	Status    string
+}
+
+// VacuumCleanupTables runs VACUUM ANALYZE on cleanup tables (must be called outside transaction)
+func (m *Maintenance) VacuumCleanupTables(ctx context.Context) error {
+	m.logger.Info("Starting VACUUM ANALYZE of cleanup tables")
+
+	query := `SELECT * FROM gtfs_rt.vacuum_cleanup_tables()`
+	rows, err := m.db.DB().QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("executing vacuum_cleanup_tables: %w", err)
+	}
+	defer rows.Close()
+
+	successCount := 0
+	totalTables := 0
+
+	for rows.Next() {
+		var result VacuumResult
+		
+		err := rows.Scan(&result.TableName, &result.Operation, &result.Duration, &result.Status)
+		if err != nil {
+			return fmt.Errorf("scanning vacuum result: %w", err)
+		}
+
+		totalTables++
+		
+		durationStr := "unknown"
+		if result.Duration != nil {
+			durationStr = *result.Duration
+		}
+
+		if result.Status == "SUCCESS" {
+			successCount++
+			m.logger.Info("Vacuumed table successfully",
+				"table", result.TableName,
+				"operation", result.Operation,
+				"duration", durationStr)
+		} else {
+			m.logger.Error("Failed to vacuum table",
+				"table", result.TableName,
+				"operation", result.Operation,
+				"duration", durationStr,
+				"error", result.Status)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating vacuum results: %w", err)
+	}
+
+	m.logger.Info("VACUUM ANALYZE completed", 
+		"successful_tables", successCount,
+		"total_tables", totalTables)
+	
+	if successCount < totalTables {
+		return fmt.Errorf("vacuum failed for %d out of %d tables", totalTables-successCount, totalTables)
+	}
+	
 	return nil
 }
 

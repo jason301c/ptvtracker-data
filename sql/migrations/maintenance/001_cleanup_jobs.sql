@@ -1,13 +1,19 @@
 -- PTV Tracker Database Maintenance and Cleanup Jobs
 -- This file contains functions and procedures for routine database maintenance
 
--- Function to clean up old real-time data
+-- Function to clean up old real-time data in batches
 -- Real-time data older than 7 days is generally not useful for transport tracking
-CREATE OR REPLACE FUNCTION gtfs_rt.cleanup_old_realtime_data(retention_days INTEGER DEFAULT 7)
+-- This batched approach prevents long-running transactions that can cause connection timeouts
+CREATE OR REPLACE FUNCTION gtfs_rt.cleanup_old_realtime_data_batch(
+  retention_days INTEGER DEFAULT 7,
+  batch_size INTEGER DEFAULT 10000
+)
 RETURNS TABLE(
   table_name TEXT,
+  batch_number INTEGER,
   records_deleted BIGINT,
-  size_freed TEXT
+  size_freed TEXT,
+  batch_duration INTERVAL
 ) 
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -15,64 +21,176 @@ DECLARE
   deleted_count BIGINT;
   size_before BIGINT;
   size_after BIGINT;
+  batch_num INTEGER;
+  start_time TIMESTAMPTZ;
+  end_time TIMESTAMPTZ;
+  total_deleted BIGINT;
+  min_timestamp TIMESTAMPTZ;
+  batch_end_timestamp TIMESTAMPTZ;
 BEGIN
   -- Calculate cutoff timestamp
   cutoff_timestamp := NOW() - (retention_days || ' days')::INTERVAL;
   
-  RAISE NOTICE 'Starting cleanup of real-time data older than %', cutoff_timestamp;
+  RAISE NOTICE 'Starting batched cleanup of real-time data older than % with batch size %', cutoff_timestamp, batch_size;
   
-  -- Clean up vehicle_positions (via feed_messages timestamp)
-  size_before := pg_total_relation_size('gtfs_rt.vehicle_positions');
-  
-  DELETE FROM gtfs_rt.vehicle_positions 
-  WHERE feed_message_id IN (
-    SELECT feed_message_id 
-    FROM gtfs_rt.feed_messages 
-    WHERE timestamp < cutoff_timestamp
-  );
-  
-  GET DIAGNOSTICS deleted_count = ROW_COUNT;
-  size_after := pg_total_relation_size('gtfs_rt.vehicle_positions');
-  
-  table_name := 'vehicle_positions';
-  records_deleted := deleted_count;
-  size_freed := pg_size_pretty(size_before - size_after);
-  RETURN NEXT;
-  
-  -- Clean up stop_time_updates (via trip_updates timestamp)
-  size_before := pg_total_relation_size('gtfs_rt.stop_time_updates');
-  
-  DELETE FROM gtfs_rt.stop_time_updates 
-  WHERE trip_update_id IN (
-    SELECT trip_update_id 
-    FROM gtfs_rt.trip_updates 
-    WHERE timestamp < cutoff_timestamp
-  );
-  
-  GET DIAGNOSTICS deleted_count = ROW_COUNT;
-  size_after := pg_total_relation_size('gtfs_rt.stop_time_updates');
-  
-  table_name := 'stop_time_updates';
-  records_deleted := deleted_count;
-  size_freed := pg_size_pretty(size_before - size_after);
-  RETURN NEXT;
-  
-  -- Clean up trip_updates
+  -- Clean up trip_updates first (most efficient, direct timestamp)
   size_before := pg_total_relation_size('gtfs_rt.trip_updates');
+  batch_num := 0;
+  total_deleted := 0;
   
-  DELETE FROM gtfs_rt.trip_updates 
+  -- Get the minimum timestamp to process in time-based batches
+  SELECT MIN(timestamp) INTO min_timestamp 
+  FROM gtfs_rt.trip_updates 
   WHERE timestamp < cutoff_timestamp;
   
-  GET DIAGNOSTICS deleted_count = ROW_COUNT;
-  size_after := pg_total_relation_size('gtfs_rt.trip_updates');
+  IF min_timestamp IS NOT NULL THEN
+    batch_end_timestamp := min_timestamp;
+    
+    LOOP
+      start_time := clock_timestamp();
+      batch_num := batch_num + 1;
+      
+      -- Process time-based batches (more efficient than LIMIT with large offsets)
+      batch_end_timestamp := batch_end_timestamp + (batch_size::TEXT || ' seconds')::INTERVAL;
+      IF batch_end_timestamp > cutoff_timestamp THEN
+        batch_end_timestamp := cutoff_timestamp;
+      END IF;
+      
+      DELETE FROM gtfs_rt.trip_updates 
+      WHERE timestamp >= (batch_end_timestamp - (batch_size::TEXT || ' seconds')::INTERVAL) 
+        AND timestamp < batch_end_timestamp;
+      
+      GET DIAGNOSTICS deleted_count = ROW_COUNT;
+      total_deleted := total_deleted + deleted_count;
+      end_time := clock_timestamp();
+      
+      IF deleted_count > 0 THEN
+        table_name := 'trip_updates';
+        batch_number := batch_num;
+        records_deleted := deleted_count;
+        size_freed := 'In progress';
+        batch_duration := end_time - start_time;
+        RETURN NEXT;
+        
+        PERFORM pg_sleep(0.05);
+      END IF;
+      
+      -- Exit if we've processed all data up to cutoff
+      EXIT WHEN batch_end_timestamp >= cutoff_timestamp;
+    END LOOP;
+  END IF;
   
+  size_after := pg_total_relation_size('gtfs_rt.trip_updates');
   table_name := 'trip_updates';
-  records_deleted := deleted_count;
+  batch_number := 0;
+  records_deleted := total_deleted;
   size_freed := pg_size_pretty(size_before - size_after);
+  batch_duration := NULL;
   RETURN NEXT;
   
-  -- Clean up alerts with old active periods
+  -- Clean up stop_time_updates (now that trip_updates are gone)
+  size_before := pg_total_relation_size('gtfs_rt.stop_time_updates');
+  batch_num := 0;
+  total_deleted := 0;
+  
+  LOOP
+    start_time := clock_timestamp();
+    batch_num := batch_num + 1;
+    
+    -- Delete orphaned stop_time_updates (trip_updates already deleted)
+    DELETE FROM gtfs_rt.stop_time_updates 
+    WHERE trip_update_id NOT IN (
+      SELECT trip_update_id FROM gtfs_rt.trip_updates
+    )
+    AND trip_update_id IN (
+      SELECT trip_update_id FROM gtfs_rt.stop_time_updates 
+      LIMIT batch_size
+    );
+    
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    total_deleted := total_deleted + deleted_count;
+    end_time := clock_timestamp();
+    
+    IF deleted_count > 0 THEN
+      table_name := 'stop_time_updates';
+      batch_number := batch_num;
+      records_deleted := deleted_count;
+      size_freed := 'In progress';
+      batch_duration := end_time - start_time;
+      RETURN NEXT;
+      
+      PERFORM pg_sleep(0.05);
+    ELSE
+      EXIT;
+    END IF;
+  END LOOP;
+  
+  size_after := pg_total_relation_size('gtfs_rt.stop_time_updates');
+  table_name := 'stop_time_updates';
+  batch_number := 0;
+  records_deleted := total_deleted;
+  size_freed := pg_size_pretty(size_before - size_after);
+  batch_duration := NULL;
+  RETURN NEXT;
+  
+  -- Clean up vehicle_positions using feed_messages timestamp approach
+  size_before := pg_total_relation_size('gtfs_rt.vehicle_positions');
+  batch_num := 0;
+  total_deleted := 0;
+  
+  LOOP
+    start_time := clock_timestamp();
+    batch_num := batch_num + 1;
+    
+    -- Create a temporary table with old feed_message_ids for efficient deletion
+    CREATE TEMP TABLE IF NOT EXISTS old_feed_messages AS 
+    SELECT feed_message_id 
+    FROM gtfs_rt.feed_messages 
+    WHERE timestamp < cutoff_timestamp 
+    LIMIT batch_size * 10; -- Get more feed message IDs per batch
+    
+    DELETE FROM gtfs_rt.vehicle_positions 
+    WHERE feed_message_id IN (
+      SELECT feed_message_id FROM old_feed_messages LIMIT batch_size
+    );
+    
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    total_deleted := total_deleted + deleted_count;
+    end_time := clock_timestamp();
+    
+    -- Clean up temp table for next iteration
+    DELETE FROM old_feed_messages 
+    WHERE feed_message_id IN (
+      SELECT feed_message_id FROM old_feed_messages LIMIT batch_size
+    );
+    
+    IF deleted_count > 0 THEN
+      table_name := 'vehicle_positions';
+      batch_number := batch_num;
+      records_deleted := deleted_count;
+      size_freed := 'In progress';
+      batch_duration := end_time - start_time;
+      RETURN NEXT;
+      
+      PERFORM pg_sleep(0.05);
+    ELSE
+      -- Drop temp table and exit
+      DROP TABLE IF EXISTS old_feed_messages;
+      EXIT;
+    END IF;
+  END LOOP;
+  
+  size_after := pg_total_relation_size('gtfs_rt.vehicle_positions');
+  table_name := 'vehicle_positions';
+  batch_number := 0;
+  records_deleted := total_deleted;
+  size_freed := pg_size_pretty(size_before - size_after);
+  batch_duration := NULL;
+  RETURN NEXT;
+  
+  -- Clean up alerts (simplified - delete all old alerts)
   size_before := pg_total_relation_size('gtfs_rt.alerts');
+  start_time := clock_timestamp();
   
   DELETE FROM gtfs_rt.alerts 
   WHERE alert_id IN (
@@ -81,7 +199,6 @@ BEGIN
     JOIN gtfs_rt.alert_active_periods aap ON a.alert_id = aap.alert_id
     WHERE COALESCE(aap.end_time, EXTRACT(EPOCH FROM NOW())::BIGINT) < EXTRACT(EPOCH FROM cutoff_timestamp)::BIGINT
     AND NOT EXISTS (
-      -- Keep alerts that have at least one active period that's still current
       SELECT 1 FROM gtfs_rt.alert_active_periods aap2 
       WHERE aap2.alert_id = a.alert_id 
       AND COALESCE(aap2.end_time, EXTRACT(EPOCH FROM NOW())::BIGINT) >= EXTRACT(EPOCH FROM cutoff_timestamp)::BIGINT
@@ -89,35 +206,104 @@ BEGIN
   );
   
   GET DIAGNOSTICS deleted_count = ROW_COUNT;
-  size_after := pg_total_relation_size('gtfs_rt.alerts');
+  end_time := clock_timestamp();
   
+  size_after := pg_total_relation_size('gtfs_rt.alerts');
   table_name := 'alerts';
+  batch_number := 1;
   records_deleted := deleted_count;
   size_freed := pg_size_pretty(size_before - size_after);
+  batch_duration := end_time - start_time;
   RETURN NEXT;
   
-  -- Clean up orphaned feed_messages (should be last)
+  -- Clean up feed_messages last (timestamp-based, efficient)
   size_before := pg_total_relation_size('gtfs_rt.feed_messages');
+  start_time := clock_timestamp();
   
   DELETE FROM gtfs_rt.feed_messages 
   WHERE timestamp < cutoff_timestamp;
   
   GET DIAGNOSTICS deleted_count = ROW_COUNT;
-  size_after := pg_total_relation_size('gtfs_rt.feed_messages');
+  end_time := clock_timestamp();
   
+  size_after := pg_total_relation_size('gtfs_rt.feed_messages');
   table_name := 'feed_messages';
+  batch_number := 1;
   records_deleted := deleted_count;
   size_freed := pg_size_pretty(size_before - size_after);
+  batch_duration := end_time - start_time;
   RETURN NEXT;
   
-  -- Vacuum analyze the cleaned tables
-  VACUUM ANALYZE gtfs_rt.vehicle_positions;
-  VACUUM ANALYZE gtfs_rt.stop_time_updates;
-  VACUUM ANALYZE gtfs_rt.trip_updates;
-  VACUUM ANALYZE gtfs_rt.alerts;
-  VACUUM ANALYZE gtfs_rt.feed_messages;
+  RAISE NOTICE 'Batched cleanup completed successfully. Run gtfs_rt.vacuum_cleanup_tables() separately to vacuum and analyze tables.';
+END;
+$$;
+
+-- Function to vacuum and analyze tables after cleanup (must be run outside transaction)
+CREATE OR REPLACE FUNCTION gtfs_rt.vacuum_cleanup_tables()
+RETURNS TABLE(
+  table_name TEXT,
+  operation TEXT,
+  duration INTERVAL,
+  status TEXT
+)
+LANGUAGE plpgsql AS $$
+DECLARE
+  start_time TIMESTAMPTZ;
+  end_time TIMESTAMPTZ;
+  table_list TEXT[] := ARRAY['vehicle_positions', 'stop_time_updates', 'trip_updates', 'alerts', 'feed_messages'];
+  tbl TEXT;
+BEGIN
+  RAISE NOTICE 'Starting VACUUM ANALYZE of cleanup tables';
   
-  RAISE NOTICE 'Cleanup completed successfully. Tables vacuumed and analyzed.';
+  FOREACH tbl IN ARRAY table_list
+  LOOP
+    start_time := clock_timestamp();
+    
+    BEGIN
+      EXECUTE format('VACUUM ANALYZE gtfs_rt.%I', tbl);
+      end_time := clock_timestamp();
+      
+      table_name := tbl;
+      operation := 'VACUUM ANALYZE';
+      duration := end_time - start_time;
+      status := 'SUCCESS';
+      RETURN NEXT;
+      
+    EXCEPTION WHEN OTHERS THEN
+      end_time := clock_timestamp();
+      
+      table_name := tbl;
+      operation := 'VACUUM ANALYZE';
+      duration := end_time - start_time;
+      status := 'ERROR: ' || SQLERRM;
+      RETURN NEXT;
+    END;
+  END LOOP;
+  
+  RAISE NOTICE 'VACUUM ANALYZE completed for all tables';
+END;
+$$;
+
+-- Keep the original function for backwards compatibility but mark as deprecated
+CREATE OR REPLACE FUNCTION gtfs_rt.cleanup_old_realtime_data(retention_days INTEGER DEFAULT 7)
+RETURNS TABLE(
+  table_name TEXT,
+  records_deleted BIGINT,
+  size_freed TEXT
+) 
+LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE WARNING 'cleanup_old_realtime_data is deprecated. Use cleanup_old_realtime_data_batch for better performance.';
+  
+  -- Call the batched version and aggregate results
+  RETURN QUERY
+  SELECT 
+    c.table_name,
+    SUM(c.records_deleted) as records_deleted,
+    MAX(c.size_freed) as size_freed
+  FROM gtfs_rt.cleanup_old_realtime_data_batch(retention_days, 5000) c
+  WHERE c.batch_number = 0  -- Only summary records
+  GROUP BY c.table_name;
 END;
 $$;
 
@@ -243,8 +429,14 @@ END;
 $$;
 
 -- Add comments for documentation
+COMMENT ON FUNCTION gtfs_rt.cleanup_old_realtime_data_batch(INTEGER, INTEGER) IS 
+'Cleans up real-time data older than specified days (default 7) using batched processing to prevent connection timeouts. batch_size controls records per batch (default 10000). Run weekly via cron job.';
+
 COMMENT ON FUNCTION gtfs_rt.cleanup_old_realtime_data(INTEGER) IS 
-'Cleans up real-time data older than specified days (default 7). Run weekly via cron job.';
+'DEPRECATED: Use cleanup_old_realtime_data_batch instead. Cleans up real-time data older than specified days (default 7).';
+
+COMMENT ON FUNCTION gtfs_rt.vacuum_cleanup_tables() IS 
+'Runs VACUUM ANALYZE on all real-time cleanup tables. Must be called outside of transactions. Run after cleanup_old_realtime_data_batch for optimal performance.';
 
 COMMENT ON FUNCTION public.get_database_health_summary() IS 
 'Returns database health metrics and recommendations. Run daily for monitoring.';

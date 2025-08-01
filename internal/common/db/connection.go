@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	_ "github.com/lib/pq"
 	"github.com/ptvtracker-data/internal/common/logger"
@@ -20,6 +21,12 @@ func New(connStr string, logger logger.Logger) (*DB, error) {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
+	// Configure connection pool for better reliability and performance
+	conn.SetMaxOpenConns(25)                 // Maximum open connections
+	conn.SetMaxIdleConns(10)                 // Maximum idle connections
+	conn.SetConnMaxLifetime(5 * time.Minute) // Maximum connection lifetime
+	conn.SetConnMaxIdleTime(2 * time.Minute) // Maximum idle time
+
 	if err := conn.Ping(); err != nil {
 		return nil, fmt.Errorf("pinging database: %w", err)
 	}
@@ -29,7 +36,11 @@ func New(connStr string, logger logger.Logger) (*DB, error) {
 		return nil, fmt.Errorf("setting search path: %w", err)
 	}
 
-	logger.Info("Database connection established with search_path")
+	logger.Info("Database connection established with search_path and connection pool configured",
+		"max_open_conns", 25,
+		"max_idle_conns", 10,
+		"conn_max_lifetime", "5m",
+		"conn_max_idle_time", "2m")
 
 	return &DB{
 		conn:   conn,
