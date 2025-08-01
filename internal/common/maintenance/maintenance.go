@@ -98,6 +98,14 @@ func (m *Maintenance) CleanupOldGTFSVersions(ctx context.Context, keepInactiveVe
 		}
 	}
 
+	// Run VACUUM ANALYZE separately (outside transaction) if any versions were cleaned
+	if len(results) > 0 {
+		if err := m.VacuumGTFSTables(ctx); err != nil {
+			m.logger.Warn("Failed to vacuum GTFS tables after cleanup", "error", err)
+			// Don't return error - cleanup was successful, vacuum is just optimization
+		}
+	}
+
 	return results, nil
 }
 
@@ -503,5 +511,64 @@ func (m *Maintenance) PerformPostImportMaintenance(ctx context.Context) error {
 	}
 
 	m.logger.Info("Post-import maintenance completed successfully")
+	return nil
+}
+
+// VacuumGTFSTables runs VACUUM ANALYZE on GTFS tables (must be called outside transaction)
+func (m *Maintenance) VacuumGTFSTables(ctx context.Context) error {
+	m.logger.Info("Starting VACUUM ANALYZE of GTFS tables")
+
+	query := `SELECT * FROM gtfs.vacuum_gtfs_tables()`
+	rows, err := m.db.DB().QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("executing vacuum_gtfs_tables: %w", err)
+	}
+	defer rows.Close()
+
+	successCount := 0
+	totalTables := 0
+
+	for rows.Next() {
+		var result VacuumResult
+		
+		err := rows.Scan(&result.TableName, &result.Operation, &result.Duration, &result.Status)
+		if err != nil {
+			return fmt.Errorf("scanning vacuum result: %w", err)
+		}
+
+		totalTables++
+		
+		durationStr := "unknown"
+		if result.Duration != nil {
+			durationStr = *result.Duration
+		}
+
+		if result.Status == "SUCCESS" {
+			successCount++
+			m.logger.Info("Vacuumed GTFS table successfully",
+				"table", result.TableName,
+				"operation", result.Operation,
+				"duration", durationStr)
+		} else {
+			m.logger.Error("Failed to vacuum GTFS table",
+				"table", result.TableName,
+				"operation", result.Operation,
+				"duration", durationStr,
+				"error", result.Status)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating vacuum results: %w", err)
+	}
+
+	m.logger.Info("GTFS VACUUM ANALYZE completed", 
+		"successful_tables", successCount,
+		"total_tables", totalTables)
+	
+	if successCount < totalTables {
+		return fmt.Errorf("vacuum failed for %d out of %d GTFS tables", totalTables-successCount, totalTables)
+	}
+	
 	return nil
 }

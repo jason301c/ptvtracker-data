@@ -555,11 +555,13 @@ BEGIN
     DELETE FROM gtfs.versions WHERE version_id = version_record.version_id;
     
     -- Return cleanup result for this version
-    version_id := version_record.version_id;
-    version_name := version_record.version_name;
-    records_deleted := deleted_count;
-    cleanup_status := 'SUCCESS';
-    size_freed := 'Calculated after all versions cleaned';
+    SELECT 
+      version_record.version_id,
+      version_record.version_name,
+      deleted_count,
+      'Calculated after all versions cleaned',
+      'SUCCESS'
+    INTO version_id, version_name, records_deleted, size_freed, cleanup_status;
     RETURN NEXT;
     
   END LOOP;
@@ -578,30 +580,66 @@ BEGIN
          pg_total_relation_size('gtfs.levels')
   INTO total_size_after;
   
-  -- Vacuum analyze all GTFS tables
-  VACUUM ANALYZE gtfs.stop_times;
-  VACUUM ANALYZE gtfs.shapes;
-  VACUUM ANALYZE gtfs.trips;
-  VACUUM ANALYZE gtfs.stops;
-  VACUUM ANALYZE gtfs.routes;
-  VACUUM ANALYZE gtfs.calendar;
-  VACUUM ANALYZE gtfs.calendar_dates;
-  VACUUM ANALYZE gtfs.agency;
-  VACUUM ANALYZE gtfs.transfers;
-  VACUUM ANALYZE gtfs.pathways;
-  VACUUM ANALYZE gtfs.levels;
-  VACUUM ANALYZE gtfs.versions;
+  -- Note: VACUUM ANALYZE should be run separately after cleanup to avoid transaction block issues
   
   -- Return summary record with total space freed
-  version_id := NULL;
-  version_name := 'CLEANUP_SUMMARY';
-  records_deleted := NULL;
-  cleanup_status := 'COMPLETED';
-  size_freed := pg_size_pretty(total_size_before - total_size_after);
+  SELECT 
+    NULL::INTEGER,
+    'CLEANUP_SUMMARY',
+    NULL::BIGINT,
+    pg_size_pretty(total_size_before - total_size_after),
+    'COMPLETED'
+  INTO version_id, version_name, records_deleted, size_freed, cleanup_status;
   RETURN NEXT;
   
   RAISE NOTICE 'GTFS version cleanup completed. Total space freed: %', 
                pg_size_pretty(total_size_before - total_size_after);
+END;
+$$;
+
+-- Function to vacuum and analyze GTFS tables after version cleanup (must be run outside transaction)
+CREATE OR REPLACE FUNCTION gtfs.vacuum_gtfs_tables()
+RETURNS TABLE(
+  table_name TEXT,
+  operation TEXT,
+  duration INTERVAL,
+  status TEXT
+)
+LANGUAGE plpgsql AS $$
+DECLARE
+  start_time TIMESTAMPTZ;
+  end_time TIMESTAMPTZ;
+  table_list TEXT[] := ARRAY['stop_times', 'shapes', 'trips', 'stops', 'routes', 'calendar', 'calendar_dates', 'agency', 'transfers', 'pathways', 'levels', 'versions'];
+  tbl TEXT;
+BEGIN
+  RAISE NOTICE 'Starting VACUUM ANALYZE of GTFS tables';
+  
+  FOREACH tbl IN ARRAY table_list
+  LOOP
+    start_time := clock_timestamp();
+    
+    BEGIN
+      EXECUTE format('VACUUM ANALYZE gtfs.%I', tbl);
+      end_time := clock_timestamp();
+      
+      table_name := tbl;
+      operation := 'VACUUM ANALYZE';
+      duration := end_time - start_time;
+      status := 'SUCCESS';
+      RETURN NEXT;
+      
+    EXCEPTION WHEN OTHERS THEN
+      end_time := clock_timestamp();
+      
+      table_name := tbl;
+      operation := 'VACUUM ANALYZE';
+      duration := end_time - start_time;
+      status := 'ERROR: ' || SQLERRM;
+      RETURN NEXT;
+    END;
+  END LOOP;
+  
+  RAISE NOTICE 'VACUUM ANALYZE completed for all GTFS tables';
 END;
 $$;
 
@@ -667,6 +705,9 @@ $$;
 -- Add comments for the new functions
 COMMENT ON FUNCTION gtfs.cleanup_old_versions(INTEGER) IS 
 'Removes old inactive GTFS versions, keeping only the active version and a specified number of recent inactive versions (default: 1). Run after importing new GTFS data.';
+
+COMMENT ON FUNCTION gtfs.vacuum_gtfs_tables() IS 
+'Runs VACUUM ANALYZE on all GTFS tables. Must be called outside of transactions. Run after cleanup_old_versions for optimal performance.';
 
 COMMENT ON FUNCTION gtfs.list_versions_with_sizes() IS 
 'Lists all GTFS versions with record counts and estimated storage sizes. Use to identify versions that can be cleaned up.';
