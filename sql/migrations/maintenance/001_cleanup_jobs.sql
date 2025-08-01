@@ -133,7 +133,7 @@ BEGIN
   batch_duration := NULL;
   RETURN NEXT;
   
-  -- Clean up vehicle_positions using feed_messages timestamp approach
+  -- Clean up vehicle_positions using direct feed_messages approach (simplified)
   size_before := pg_total_relation_size('gtfs_rt.vehicle_positions');
   batch_num := 0;
   total_deleted := 0;
@@ -142,27 +142,18 @@ BEGIN
     start_time := clock_timestamp();
     batch_num := batch_num + 1;
     
-    -- Create a temporary table with old feed_message_ids for efficient deletion
-    CREATE TEMP TABLE IF NOT EXISTS old_feed_messages AS 
-    SELECT feed_message_id 
-    FROM gtfs_rt.feed_messages 
-    WHERE timestamp < cutoff_timestamp 
-    LIMIT batch_size * 10; -- Get more feed message IDs per batch
-    
+    -- Delete vehicle_positions directly using old feed_message_ids (simplified approach)
     DELETE FROM gtfs_rt.vehicle_positions 
     WHERE feed_message_id IN (
-      SELECT feed_message_id FROM old_feed_messages LIMIT batch_size
+      SELECT fm.feed_message_id 
+      FROM gtfs_rt.feed_messages fm
+      WHERE fm.timestamp < cutoff_timestamp
+      LIMIT batch_size
     );
     
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     total_deleted := total_deleted + deleted_count;
     end_time := clock_timestamp();
-    
-    -- Clean up temp table for next iteration
-    DELETE FROM old_feed_messages 
-    WHERE feed_message_id IN (
-      SELECT feed_message_id FROM old_feed_messages LIMIT batch_size
-    );
     
     IF deleted_count > 0 THEN
       table_name := 'vehicle_positions';
@@ -174,8 +165,6 @@ BEGIN
       
       PERFORM pg_sleep(0.05);
     ELSE
-      -- Drop temp table and exit
-      DROP TABLE IF EXISTS old_feed_messages;
       EXIT;
     END IF;
   END LOOP;
@@ -463,6 +452,12 @@ DECLARE
   total_size_before BIGINT;
   total_size_after BIGINT;
   gtfs_table RECORD;
+  -- Explicit output variables to avoid ambiguity
+  out_version_id INTEGER;
+  out_version_name TEXT;
+  out_records_deleted BIGINT;
+  out_size_freed TEXT;
+  out_cleanup_status TEXT;
 BEGIN
   -- Get total GTFS schema size before cleanup
   SELECT pg_total_relation_size('gtfs.stop_times') + 
@@ -555,13 +550,17 @@ BEGIN
     DELETE FROM gtfs.versions WHERE version_id = version_record.version_id;
     
     -- Return cleanup result for this version
-    SELECT 
-      version_record.version_id,
-      version_record.version_name,
-      deleted_count,
-      'Calculated after all versions cleaned',
-      'SUCCESS'
-    INTO version_id, version_name, records_deleted, size_freed, cleanup_status;
+    out_version_id := version_record.version_id;
+    out_version_name := version_record.version_name;
+    out_records_deleted := deleted_count;
+    out_size_freed := 'Calculated after all versions cleaned';
+    out_cleanup_status := 'SUCCESS';
+    
+    version_id := out_version_id;
+    version_name := out_version_name;
+    records_deleted := out_records_deleted;
+    size_freed := out_size_freed;
+    cleanup_status := out_cleanup_status;
     RETURN NEXT;
     
   END LOOP;
@@ -583,13 +582,17 @@ BEGIN
   -- Note: VACUUM ANALYZE should be run separately after cleanup to avoid transaction block issues
   
   -- Return summary record with total space freed
-  SELECT 
-    NULL::INTEGER,
-    'CLEANUP_SUMMARY',
-    NULL::BIGINT,
-    pg_size_pretty(total_size_before - total_size_after),
-    'COMPLETED'
-  INTO version_id, version_name, records_deleted, size_freed, cleanup_status;
+  out_version_id := NULL;
+  out_version_name := 'CLEANUP_SUMMARY';
+  out_records_deleted := NULL;
+  out_size_freed := pg_size_pretty(total_size_before - total_size_after);
+  out_cleanup_status := 'COMPLETED';
+  
+  version_id := out_version_id;
+  version_name := out_version_name;
+  records_deleted := out_records_deleted;
+  size_freed := out_size_freed;
+  cleanup_status := out_cleanup_status;
   RETURN NEXT;
   
   RAISE NOTICE 'GTFS version cleanup completed. Total space freed: %', 
