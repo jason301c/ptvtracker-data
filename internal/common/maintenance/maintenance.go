@@ -51,62 +51,147 @@ func New(database *db.DB, logger logger.Logger) *Maintenance {
 	}
 }
 
-// CleanupOldGTFSVersions removes old inactive GTFS versions, keeping only
-// the active version and a specified number of recent inactive versions
+// CleanupOldGTFSVersions removes old inactive GTFS versions using direct Go queries
 func (m *Maintenance) CleanupOldGTFSVersions(ctx context.Context, keepInactiveVersions int) ([]VersionCleanupResult, error) {
-	m.logger.Info("Starting cleanup of old GTFS versions", "keep_inactive_versions", keepInactiveVersions)
+	m.logger.Info("Starting simple GTFS version cleanup", "keep_inactive_versions", keepInactiveVersions)
 
-	query := `SELECT * FROM gtfs.cleanup_old_versions($1)`
+	// Get versions to delete (inactive versions beyond keep limit)
+	query := `
+		SELECT version_id, version_name, created_at
+		FROM gtfs.versions 
+		WHERE is_active = false
+		ORDER BY created_at DESC
+		OFFSET $1`
+	
 	rows, err := m.db.DB().QueryContext(ctx, query, keepInactiveVersions)
 	if err != nil {
-		return nil, fmt.Errorf("executing cleanup_old_versions: %w", err)
+		return nil, fmt.Errorf("querying old versions: %w", err)
 	}
 	defer rows.Close()
 
-	var results []VersionCleanupResult
+	var versionsToDelete []struct {
+		ID   int
+		Name string
+	}
+
 	for rows.Next() {
-		var result VersionCleanupResult
-		err := rows.Scan(
-			&result.VersionID,
-			&result.VersionName,
-			&result.RecordsDeleted,
-			&result.SizeFreed,
-			&result.CleanupStatus,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("scanning cleanup result: %w", err)
+		var versionID int
+		var versionName string
+		var createdAt interface{}
+		
+		if err := rows.Scan(&versionID, &versionName, &createdAt); err != nil {
+			return nil, fmt.Errorf("scanning version: %w", err)
 		}
-		results = append(results, result)
+		
+		versionsToDelete = append(versionsToDelete, struct {
+			ID   int
+			Name string
+		}{ID: versionID, Name: versionName})
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating cleanup results: %w", err)
+		return nil, fmt.Errorf("iterating versions: %w", err)
 	}
 
-	// Log results
-	for _, result := range results {
-		if result.VersionID != nil {
-			m.logger.Info("Cleaned up GTFS version",
-				"version_id", *result.VersionID,
-				"version_name", result.VersionName,
-				"records_deleted", *result.RecordsDeleted,
-				"status", result.CleanupStatus)
-		} else {
-			m.logger.Info("GTFS cleanup summary",
-				"size_freed", result.SizeFreed,
-				"status", result.CleanupStatus)
+	var results []VersionCleanupResult
+	totalDeleted := int64(0)
+
+	// Delete each version individually with simple queries
+	for _, version := range versionsToDelete {
+		m.logger.Info("Deleting GTFS version", "version_id", version.ID, "version_name", version.Name)
+		
+		deletedCount, err := m.deleteGTFSVersion(ctx, version.ID)
+		if err != nil {
+			m.logger.Error("Failed to delete GTFS version", "version_id", version.ID, "error", err)
+			results = append(results, VersionCleanupResult{
+				VersionID:      &version.ID,
+				VersionName:    version.Name,
+				RecordsDeleted: &deletedCount,
+				SizeFreed:      "Error during deletion",
+				CleanupStatus:  fmt.Sprintf("ERROR: %v", err),
+			})
+			continue
 		}
+
+		totalDeleted += deletedCount
+		results = append(results, VersionCleanupResult{
+			VersionID:      &version.ID,
+			VersionName:    version.Name,
+			RecordsDeleted: &deletedCount,
+			SizeFreed:      "Success",
+			CleanupStatus:  "SUCCESS",
+		})
+
+		m.logger.Info("Successfully deleted GTFS version", 
+			"version_id", version.ID, 
+			"records_deleted", deletedCount)
 	}
 
-	// Run VACUUM ANALYZE separately (outside transaction) if any versions were cleaned
-	if len(results) > 0 {
-		if err := m.VacuumGTFSTables(ctx); err != nil {
-			m.logger.Warn("Failed to vacuum GTFS tables after cleanup", "error", err)
-			// Don't return error - cleanup was successful, vacuum is just optimization
-		}
+	// Add summary
+	if len(versionsToDelete) > 0 {
+		results = append(results, VersionCleanupResult{
+			VersionID:      nil,
+			VersionName:    "CLEANUP_SUMMARY",
+			RecordsDeleted: &totalDeleted,
+			SizeFreed:      fmt.Sprintf("%d versions deleted", len(versionsToDelete)),
+			CleanupStatus:  "COMPLETED",
+		})
+		
+		m.logger.Info("GTFS version cleanup completed", 
+			"versions_deleted", len(versionsToDelete),
+			"total_records_deleted", totalDeleted)
+	} else {
+		m.logger.Info("No GTFS versions to cleanup")
 	}
 
 	return results, nil
+}
+
+// deleteGTFSVersion deletes a single GTFS version using simple DELETE statements
+func (m *Maintenance) deleteGTFSVersion(ctx context.Context, versionID int) (int64, error) {
+	totalDeleted := int64(0)
+	
+	// Delete in dependency order to avoid foreign key conflicts
+	tables := []string{
+		"stop_times",     // References trips
+		"trips",          // References routes, calendar, shapes  
+		"shapes",         // Independent
+		"calendar_dates", // References calendar
+		"calendar",       // Independent
+		"transfers",      // References stops
+		"pathways",       // References levels, stops
+		"levels",         // Independent
+		"stops",          // Independent
+		"routes",         // References agency
+		"agency",         // Independent
+	}
+
+	for _, table := range tables {
+		query := fmt.Sprintf("DELETE FROM gtfs.%s WHERE version_id = $1", table)
+		result, err := m.db.DB().ExecContext(ctx, query, versionID)
+		if err != nil {
+			return totalDeleted, fmt.Errorf("deleting from %s: %w", table, err)
+		}
+		
+		deleted, err := result.RowsAffected()
+		if err != nil {
+			return totalDeleted, fmt.Errorf("getting rows affected for %s: %w", table, err)
+		}
+		
+		totalDeleted += deleted
+		if deleted > 0 {
+			m.logger.Debug("Deleted records from table", "table", table, "records", deleted)
+		}
+	}
+
+	// Finally delete the version record itself
+	query := "DELETE FROM gtfs.versions WHERE version_id = $1"
+	_, err := m.db.DB().ExecContext(ctx, query, versionID)
+	if err != nil {
+		return totalDeleted, fmt.Errorf("deleting version record: %w", err)
+	}
+
+	return totalDeleted, nil
 }
 
 // BatchedCleanupResult represents the result of a batched cleanup operation
@@ -444,61 +529,31 @@ func (m *Maintenance) PerformPostImportMaintenance(ctx context.Context) error {
 	return nil
 }
 
-// VacuumGTFSTables runs VACUUM ANALYZE on GTFS tables (must be called outside transaction)
+// VacuumGTFSTables runs simple VACUUM on GTFS tables after cleanup
 func (m *Maintenance) VacuumGTFSTables(ctx context.Context) error {
-	m.logger.Info("Starting VACUUM ANALYZE of GTFS tables")
+	m.logger.Info("Starting simple VACUUM of GTFS tables")
 
-	query := `SELECT * FROM gtfs.vacuum_gtfs_tables()`
-	rows, err := m.db.DB().QueryContext(ctx, query)
-	if err != nil {
-		return fmt.Errorf("executing vacuum_gtfs_tables: %w", err)
+	tables := []string{
+		"stop_times", "trips", "shapes", "calendar_dates", "calendar",
+		"transfers", "pathways", "levels", "stops", "routes", "agency", "versions",
 	}
-	defer rows.Close()
 
 	successCount := 0
-	totalTables := 0
-
-	for rows.Next() {
-		var result VacuumResult
-		
-		err := rows.Scan(&result.TableName, &result.Operation, &result.Duration, &result.Status)
+	for _, table := range tables {
+		query := fmt.Sprintf("VACUUM gtfs.%s", table)
+		_, err := m.db.DB().ExecContext(ctx, query)
 		if err != nil {
-			return fmt.Errorf("scanning vacuum result: %w", err)
+			m.logger.Warn("Failed to vacuum GTFS table", "table", table, "error", err)
+			continue
 		}
-
-		totalTables++
 		
-		durationStr := "unknown"
-		if result.Duration != nil {
-			durationStr = *result.Duration
-		}
-
-		if result.Status == "SUCCESS" {
-			successCount++
-			m.logger.Info("Vacuumed GTFS table successfully",
-				"table", result.TableName,
-				"operation", result.Operation,
-				"duration", durationStr)
-		} else {
-			m.logger.Error("Failed to vacuum GTFS table",
-				"table", result.TableName,
-				"operation", result.Operation,
-				"duration", durationStr,
-				"error", result.Status)
-		}
+		successCount++
+		m.logger.Debug("Vacuumed GTFS table", "table", table)
 	}
-
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterating vacuum results: %w", err)
-	}
-
-	m.logger.Info("GTFS VACUUM ANALYZE completed", 
-		"successful_tables", successCount,
-		"total_tables", totalTables)
 	
-	if successCount < totalTables {
-		return fmt.Errorf("vacuum failed for %d out of %d GTFS tables", totalTables-successCount, totalTables)
-	}
+	m.logger.Info("GTFS vacuum completed", 
+		"successful_tables", successCount,
+		"total_tables", len(tables))
 	
 	return nil
 }
