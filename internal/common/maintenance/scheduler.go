@@ -36,12 +36,12 @@ type SchedulerConfig struct {
 // DefaultSchedulerConfig returns sensible defaults
 func DefaultSchedulerConfig() SchedulerConfig {
 	return SchedulerConfig{
-		RealtimeCleanupInterval: 6 * time.Hour,  // Every 6 hours
+		RealtimeCleanupInterval: 24 * time.Hour, // Daily cleanup (simple truncate)
 		StaticCleanupInterval:   24 * time.Hour, // Daily
-		RealtimeRetentionDays:   1,              // Keep 1 day of real-time data
+		RealtimeRetentionDays:   0,              // Not used - we truncate all data
 		KeepInactiveVersions:    1,              // Keep 1 inactive version as backup
-		BatchSize:               10000,          // 10K records per batch
-		UseBatchedCleanup:       true,           // Use batched cleanup by default
+		BatchSize:               1,              // Not used for truncate
+		UseBatchedCleanup:       true,           // Use simple truncate cleanup
 	}
 }
 
@@ -185,41 +185,24 @@ func (s *CleanupScheduler) performRealtimeCleanup(ctx context.Context) {
 		return
 	}
 
-	s.logger.Info("Starting scheduled real-time data cleanup",
-		"retention_days", s.config.RealtimeRetentionDays,
-		"use_batched", s.config.UseBatchedCleanup,
-		"batch_size", s.config.BatchSize)
+	s.logger.Info("Starting scheduled real-time data cleanup (simple truncate)")
 	
 	start := time.Now()
-	var err error
 	
-	if s.config.UseBatchedCleanup {
-		err = s.maintenance.CleanupOldRealtimeDataBatched(ctx, s.config.RealtimeRetentionDays, s.config.BatchSize)
-	} else {
-		err = s.maintenance.CleanupOldRealtimeData(ctx, s.config.RealtimeRetentionDays)
-	}
+	// Always use simple truncate approach
+	err := s.maintenance.CleanupOldRealtimeDataBatched(ctx, 0, 1)
 	
 	duration := time.Since(start)
 
 	if err != nil {
-		s.logger.Error("Real-time cleanup failed", 
-			"error", err, 
-			"duration", duration,
-			"method", func() string {
-				if s.config.UseBatchedCleanup {
-					return "batched"
-				}
-				return "legacy"
-			}())
+		s.logger.Error("Real-time cleanup failed", "error", err, "duration", duration)
 	} else {
-		s.logger.Info("Real-time cleanup completed successfully", 
-			"duration", duration,
-			"method", func() string {
-				if s.config.UseBatchedCleanup {
-					return "batched"
-				}
-				return "legacy"
-			}())
+		s.logger.Info("Real-time cleanup completed successfully", "duration", duration)
+		
+		// Run vacuum after cleanup
+		if err := s.maintenance.VacuumCleanupTables(ctx); err != nil {
+			s.logger.Warn("Failed to vacuum after cleanup", "error", err)
+		}
 	}
 }
 
@@ -254,14 +237,17 @@ func (s *CleanupScheduler) TriggerRealtimeCleanup(ctx context.Context) error {
 		return fmt.Errorf("cannot perform cleanup - GTFS import in progress")
 	}
 
-	s.logger.Info("Manual real-time cleanup triggered",
-		"retention_days", s.config.RealtimeRetentionDays,
-		"use_batched", s.config.UseBatchedCleanup)
+	s.logger.Info("Manual real-time cleanup triggered (simple truncate)")
 	
-	if s.config.UseBatchedCleanup {
-		return s.maintenance.CleanupOldRealtimeDataBatched(ctx, s.config.RealtimeRetentionDays, s.config.BatchSize)
+	// Always use simple truncate approach
+	err := s.maintenance.CleanupOldRealtimeDataBatched(ctx, 0, 1)
+	if err == nil {
+		// Run vacuum after cleanup
+		if vacErr := s.maintenance.VacuumCleanupTables(ctx); vacErr != nil {
+			s.logger.Warn("Failed to vacuum after manual cleanup", "error", vacErr)
+		}
 	}
-	return s.maintenance.CleanupOldRealtimeData(ctx, s.config.RealtimeRetentionDays)
+	return err
 }
 
 // TriggerStaticCleanup manually triggers GTFS version cleanup (for testing/manual use)  
