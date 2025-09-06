@@ -17,9 +17,8 @@ ON gtfs_rt.stop_time_updates(stop_id);
 CREATE INDEX IF NOT EXISTS idx_trip_updates_timestamp 
 ON gtfs_rt.trip_updates(feed_message_id, trip_id);
 
-CREATE INDEX IF NOT EXISTS idx_feed_messages_recent 
-ON gtfs_rt.feed_messages(source_id, received_at DESC)
-WHERE received_at > NOW() - INTERVAL '2 hours';
+CREATE INDEX IF NOT EXISTS idx_feed_messages_received_at 
+ON gtfs_rt.feed_messages(source_id, received_at DESC);
 
 -- =========================================
 -- STOP TIME UPDATES NOTIFICATIONS
@@ -261,6 +260,3 @@ COMMENT ON FUNCTION gtfs_rt.notify_feed_message_update IS
 
 COMMENT ON INDEX idx_stop_time_updates_stop_id_lookup IS 
 'Speeds up real-time queries by stop_id which are common in the SSE endpoint';
-
-COMMENT ON INDEX idx_feed_messages_recent IS 
-'Partial index for recent feed messages to optimize real-time data queries';

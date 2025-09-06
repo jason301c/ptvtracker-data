@@ -11,7 +11,7 @@ CREATE SCHEMA IF NOT EXISTS gtfs_rt;
 SET search_path TO gtfs_rt, gtfs, public;
 
 -- Feed message metadata
-CREATE TABLE feed_messages (
+CREATE TABLE IF NOT EXISTS feed_messages (
     feed_message_id SERIAL PRIMARY KEY,
     timestamp TIMESTAMPTZ NOT NULL, -- UTC
     gtfs_realtime_version VARCHAR(10),
@@ -24,7 +24,7 @@ CREATE TABLE feed_messages (
 );
 
 -- Vehicle positions
-CREATE TABLE vehicle_positions (
+CREATE TABLE IF NOT EXISTS vehicle_positions (
     vehicle_position_id SERIAL PRIMARY KEY,
     feed_message_id INTEGER NOT NULL REFERENCES feed_messages(feed_message_id) ON DELETE CASCADE,
     entity_id VARCHAR(100) NOT NULL,
@@ -51,7 +51,7 @@ CREATE TABLE vehicle_positions (
 );
 
 -- Trip updates
-CREATE TABLE trip_updates (
+CREATE TABLE IF NOT EXISTS trip_updates (
     trip_update_id SERIAL PRIMARY KEY,
     feed_message_id INTEGER NOT NULL REFERENCES feed_messages(feed_message_id) ON DELETE CASCADE,
     entity_id VARCHAR(100) NOT NULL,
@@ -73,7 +73,7 @@ CREATE TABLE trip_updates (
 );
 
 -- Stop time updates (child of trip updates)
-CREATE TABLE stop_time_updates (
+CREATE TABLE IF NOT EXISTS stop_time_updates (
     stop_time_update_id SERIAL PRIMARY KEY,
     trip_update_id INTEGER NOT NULL REFERENCES trip_updates(trip_update_id) ON DELETE CASCADE,
     stop_sequence INTEGER NOT NULL DEFAULT -1,
@@ -92,7 +92,7 @@ CREATE TABLE stop_time_updates (
 );
 
 -- Service alerts
-CREATE TABLE alerts (
+CREATE TABLE IF NOT EXISTS alerts (
     alert_id SERIAL PRIMARY KEY,
     feed_message_id INTEGER NOT NULL REFERENCES feed_messages(feed_message_id) ON DELETE CASCADE,
     entity_id VARCHAR(100) NOT NULL,
@@ -105,7 +105,7 @@ CREATE TABLE alerts (
 );
 
 -- Alert active periods
-CREATE TABLE alert_active_periods (
+CREATE TABLE IF NOT EXISTS alert_active_periods (
     alert_active_period_id SERIAL PRIMARY KEY,
     alert_id INTEGER NOT NULL REFERENCES alerts(alert_id) ON DELETE CASCADE,
     start_time BIGINT, -- POSIX time, always UTC
@@ -113,7 +113,7 @@ CREATE TABLE alert_active_periods (
 );
 
 -- Alert informed entities (what the alert affects)
-CREATE TABLE alert_informed_entities (
+CREATE TABLE IF NOT EXISTS alert_informed_entities (
     informed_entity_id SERIAL PRIMARY KEY,
     alert_id INTEGER NOT NULL REFERENCES alerts(alert_id) ON DELETE CASCADE,
     agency_id VARCHAR(50),
@@ -127,7 +127,7 @@ CREATE TABLE alert_informed_entities (
 );
 
 -- Alert translations (for URL and text fields)
-CREATE TABLE alert_translations (
+CREATE TABLE IF NOT EXISTS alert_translations (
     translation_id SERIAL PRIMARY KEY,
     alert_id INTEGER NOT NULL REFERENCES alerts(alert_id) ON DELETE CASCADE,
     field_type VARCHAR(20) NOT NULL, -- 'url', 'header_text', 'description_text'
@@ -136,35 +136,35 @@ CREATE TABLE alert_translations (
 );
 
 -- Create indexes for performance
-CREATE INDEX idx_feed_messages_timestamp ON feed_messages(timestamp DESC);
-CREATE INDEX idx_feed_messages_source ON feed_messages(source_id, timestamp DESC);
-CREATE INDEX idx_feed_messages_version ON feed_messages(version_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_feed_messages_timestamp ON feed_messages(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_feed_messages_source ON feed_messages(source_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_feed_messages_version ON feed_messages(version_id, timestamp DESC);
 
-CREATE INDEX idx_vehicle_positions_timestamp ON vehicle_positions(timestamp DESC);
-CREATE INDEX idx_vehicle_positions_trip ON vehicle_positions(trip_id) WHERE trip_id IS NOT NULL;
-CREATE INDEX idx_vehicle_positions_route ON vehicle_positions(route_id) WHERE route_id IS NOT NULL;
-CREATE INDEX idx_vehicle_positions_location ON vehicle_positions USING GIST (ll_to_earth(latitude, longitude));
-CREATE INDEX idx_vehicle_positions_feed ON vehicle_positions(feed_message_id);
-CREATE INDEX idx_vehicle_positions_vehicle ON vehicle_positions(vehicle_id) WHERE vehicle_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_vehicle_positions_timestamp ON vehicle_positions(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_vehicle_positions_trip ON vehicle_positions(trip_id) WHERE trip_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_vehicle_positions_route ON vehicle_positions(route_id) WHERE route_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_vehicle_positions_location ON vehicle_positions USING GIST (ll_to_earth(latitude, longitude));
+CREATE INDEX IF NOT EXISTS idx_vehicle_positions_feed ON vehicle_positions(feed_message_id);
+CREATE INDEX IF NOT EXISTS idx_vehicle_positions_vehicle ON vehicle_positions(vehicle_id) WHERE vehicle_id IS NOT NULL;
 
-CREATE INDEX idx_trip_updates_trip ON trip_updates(trip_id);
-CREATE INDEX idx_trip_updates_timestamp ON trip_updates(timestamp DESC) WHERE timestamp IS NOT NULL;
-CREATE INDEX idx_trip_updates_feed ON trip_updates(feed_message_id);
-CREATE INDEX idx_trip_updates_route ON trip_updates(route_id) WHERE route_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_trip_updates_trip ON trip_updates(trip_id);
+CREATE INDEX IF NOT EXISTS idx_trip_updates_timestamp ON trip_updates(timestamp DESC) WHERE timestamp IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_trip_updates_feed ON trip_updates(feed_message_id);
+CREATE INDEX IF NOT EXISTS idx_trip_updates_route ON trip_updates(route_id) WHERE route_id IS NOT NULL;
 
-CREATE INDEX idx_stop_time_updates_trip ON stop_time_updates(trip_update_id);
-CREATE INDEX idx_stop_time_updates_stop ON stop_time_updates(stop_id) WHERE stop_id IS NOT NULL;
-CREATE INDEX idx_stop_time_updates_arrival ON stop_time_updates(arrival_time) WHERE arrival_time IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_stop_time_updates_trip ON stop_time_updates(trip_update_id);
+CREATE INDEX IF NOT EXISTS idx_stop_time_updates_stop ON stop_time_updates(stop_id) WHERE stop_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_stop_time_updates_arrival ON stop_time_updates(arrival_time) WHERE arrival_time IS NOT NULL;
 
-CREATE INDEX idx_alerts_feed ON alerts(feed_message_id);
-CREATE INDEX idx_alerts_severity ON alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_alerts_feed ON alerts(feed_message_id);
+CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
 
-CREATE INDEX idx_alert_active_periods_alert ON alert_active_periods(alert_id);
-CREATE INDEX idx_alert_active_periods_time ON alert_active_periods(start_time, end_time);
+CREATE INDEX IF NOT EXISTS idx_alert_active_periods_alert ON alert_active_periods(alert_id);
+CREATE INDEX IF NOT EXISTS idx_alert_active_periods_time ON alert_active_periods(start_time, end_time);
 
-CREATE INDEX idx_alert_informed_entities_alert ON alert_informed_entities(alert_id);
-CREATE INDEX idx_alert_informed_entities_route ON alert_informed_entities(route_id) WHERE route_id IS NOT NULL;
-CREATE INDEX idx_alert_informed_entities_stop ON alert_informed_entities(stop_id) WHERE stop_id IS NOT NULL;
-CREATE INDEX idx_alert_informed_entities_trip ON alert_informed_entities(trip_id) WHERE trip_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_alert_informed_entities_alert ON alert_informed_entities(alert_id);
+CREATE INDEX IF NOT EXISTS idx_alert_informed_entities_route ON alert_informed_entities(route_id) WHERE route_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_alert_informed_entities_stop ON alert_informed_entities(stop_id) WHERE stop_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_alert_informed_entities_trip ON alert_informed_entities(trip_id) WHERE trip_id IS NOT NULL;
 
-CREATE INDEX idx_alert_translations_alert ON alert_translations(alert_id, field_type);
+CREATE INDEX IF NOT EXISTS idx_alert_translations_alert ON alert_translations(alert_id, field_type);
